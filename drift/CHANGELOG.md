@@ -1,9 +1,103 @@
-## 2.12.0-dev
+## 2.19.0-dev
+
+- Add the `enableMigrations` parameter to `WasmDatabase` to control whether drift
+  migrations are enabled on that database.
+
+## 2.18.0
+
+- Adds a new interface for writing most simple statements without manually creating
+  select statements and expressions.
+  For a detailed description, see the [documentation website](https://drift.simonbinder.eu/docs/manager/).
+  This feature requires additional code to be generated - if you prefer using the existing APIs
+  exclusively, you can use the [`generate_manager: false` builder option](https://drift.simonbinder.eu/docs/advanced-features/builder_options/)
+- Add `AggregateFunctionExpression` to write custom [aggregate function](https://www.sqlite.org/lang_aggfunc.html)
+  invocations in the Dart query builder.
+- The `json_group_array` and `jsonb_group_array` functions now contain an `orderBy`
+  and `filter` parameter.
+
+## 2.17.0
+
+- Adds `companion` entry to `DataClassName` to override the name of the
+  generated companion class.
+- Add the `TypeConverter.extensionType` factory to create type converters for
+  extension types.
+- Fix invalid SQL syntax being generated for `BLOB` literals on postgres.
+
+## 2.16.0
+
+- When a migration throws, the database will now block subsequent operations
+  instead of potentially allowing them to operate on a database in an
+  inconsistent state.
+- Statements built through the Dart query builder will now run in the context
+  active while they are running, instead of the context active at the time they
+  were created. For instance, creating an `UpdateStatement` with
+  `database.update` outside of a transaction and then calling
+  `UpdateStatement.write` inside of a transaction will now perform the update
+  inside of the transaction, instead of causing a deadlock.
+- Improve stack traces for errors happening on drift isolates (which includes
+  usages of `NativeDatabase.createInBackground`).
+- Don't cache `EXPLAIN` statements, avoiding schema locks.
+- Deprecate `Value.ofNullable` in favor of `Value.absentIfNull`, which is more
+  explicit about its behavior and allows nullable types too.
+- Migrate `WasmDatabase` to `dart:js_interop` and `package:web`.
+
+## 2.15.0
+
+- Methods in the query builder API now respect custom types.
+- Support `DialectAwareSqlType`, custom types that depend on the dialect of the
+  active database connection. This can be used to use native types not
+  supported by drift (like UUIDs) on databases that support it while falling
+  back to a text type on sqlite3.
+- Close wasm databases hosted in workers after the last client disconnects.
+- Add `enableMigrations` parameter to `NativeDatabase` which can be used to
+  optionally disable database migrations when opening databases.
+- Support `jsonb` functions in the Dart query builder.
+
+## 2.14.1
+
+- Fix `WasmProbeResult.open` ignoring the `ìnitializeDatabase` callback.
+
+## 2.14.0
+
+- Add the `QueryInterceptor` API to easily monitor or transform all database
+  calls made by drift.
+- Add the `count()` extension on tables to easily count rows in tables or views.
+
+## 2.13.2
+
+- Fix a race condition causing query streams to not emit new data around some
+  transaction setups.
+
+## 2.13.1
+
+- Fix a bug when running batches over serialized communication channels.
+
+## 2.13.0
+
+- Add APIs to setup Wasm databases with custom drift workers.
+- Add support for [custom types](https://drift.simonbinder.eu/docs/sql-api/types/),
+  which are useful when extending drift to support other database engines.
+- Drift now provides a DevTools extension embedding the drift inspector written by
+  [Koen Van Looveren](https://github.com/vanlooverenkoen/).
+- Add `Expression.and` and `Expression.or` to create disjunctions and conjunctions
+  of sub-predicates.
+- Step-by-step migrations now save the intermediate schema version after each step.
+
+## 2.12.1
+
+- Fix `readWithConverter` throwing an exception for null values in non-
+  nullable columns.
+
+## 2.12.0
 
 - Add support for table-valued functions in the Dart query builder.
 - Add the `@TableIndex` annotation for table classes to add an index to the
   table.
 - Support `json_each` and `json_tree`.
+- Add the `TypeConverter.json` method to define type converters storing JSON
+  values more easily.
+- Add `TypedResult.readWithConverter` to read a column with a type converter
+  from a join result row.
 
 ## 2.11.1
 

@@ -131,10 +131,31 @@ class TypeResolver extends RecursiveVisitor<TypeExpectation, void> {
   }
 
   @override
-  void visitSetComponent(SetComponent e, TypeExpectation arg) {
+  void visitSingleColumnSetComponent(
+      SingleColumnSetComponent e, TypeExpectation arg) {
     visit(e.column, const NoTypeExpectation());
     _lazyCopy(e.expression, e.column);
     visit(e.expression, const NoTypeExpectation());
+  }
+
+  @override
+  void visitMultiColumnSetComponent(
+      MultiColumnSetComponent e, TypeExpectation arg) {
+    visitList(e.columns, const NoTypeExpectation());
+
+    final targets = e.resolvedTargetColumns ?? const [];
+    for (final column in targets) {
+      _handleColumn(column, e);
+    }
+
+    final expectations = targets.map((r) {
+      if (r != null && session.graph.knowsType(r)) {
+        return ExactTypeExpectation(session.typeOf(r)!);
+      }
+      return const NoTypeExpectation();
+    }).toList();
+
+    visit(e.rowValue, SelectTypeExpectation(expectations));
   }
 
   @override
@@ -406,9 +427,11 @@ class TypeResolver extends RecursiveVisitor<TypeExpectation, void> {
   @override
   void visitInExpression(InExpression e, TypeExpectation arg) {
     session._checkAndResolve(e, const ResolvedType.bool(), arg);
-    session._addRelation(NullableIfSomeOtherIs(e, e.childNodes));
 
-    session._addRelation(CopyTypeFrom(e.inside, e.left, array: true));
+    if (e.inside case Expression inExpr) {
+      session._addRelation(NullableIfSomeOtherIs(e, [e.left, inExpr]));
+      session._addRelation(CopyTypeFrom(inExpr, e.left, array: true));
+    }
 
     visitChildren(e, const NoTypeExpectation());
   }
@@ -549,10 +572,18 @@ class TypeResolver extends RecursiveVisitor<TypeExpectation, void> {
         // ignore: dead_code
         throw AssertionError(); // required so that this switch compiles
       case 'sum':
+        checkArgumentCount(1);
+
+        // The result of `sum()` is `NULL` if there are no input rows.
+        session._addRelation(CopyAndCast(
+          e,
+          params.first,
+          CastMode.numeric,
+          dropTypeHint: true,
+          makeNullable: true,
+        ));
         session._addRelation(
-            CopyAndCast(e, params.first, CastMode.numeric, dropTypeHint: true));
-        session._addRelation(DefaultType(e, defaultType: _realType));
-        nullableIfChildIs();
+            DefaultType(e, defaultType: _realType.withNullable(true)));
         return null;
       case 'lower':
       case 'ltrim':
@@ -565,7 +596,16 @@ class TypeResolver extends RecursiveVisitor<TypeExpectation, void> {
       case 'upper':
         nullableIfChildIs();
         return _textType.withoutNullabilityInfo;
+      case 'concat':
+        return _textType;
+      case 'concat_ws':
+        // null if the first argument is null
+        if (params.isNotEmpty) {
+          session._addRelation(NullableIfSomeOtherIs(e, [params.first]));
+        }
+        return _textType.withoutNullabilityInfo;
       case 'group_concat':
+      case 'string_agg':
         return _textType.withNullable(true);
       case 'date':
       case 'time':
@@ -581,7 +621,7 @@ class TypeResolver extends RecursiveVisitor<TypeExpectation, void> {
       case 'timediff':
         return _textType;
       case 'datetime':
-        return _textType.copyWith(hint: const IsDateTime(), nullable: true);
+        return _textType.copyWith(hints: const [IsDateTime()], nullable: true);
       case 'changes':
       case 'last_insert_rowid':
       case 'random':
@@ -655,7 +695,7 @@ class TypeResolver extends RecursiveVisitor<TypeExpectation, void> {
         return null;
       case 'unixepoch':
         return const ResolvedType(
-            type: BasicType.int, nullable: true, hint: IsDateTime());
+            type: BasicType.int, nullable: true, hints: [IsDateTime()]);
     }
 
     final extensionHandler = _functionHandlerFor(e);
@@ -710,7 +750,7 @@ class TypeResolver extends RecursiveVisitor<TypeExpectation, void> {
                 param,
                 const ExactTypeExpectation(ResolvedType(
                   type: BasicType.text,
-                  hint: IsDateTime(),
+                  hints: [IsDateTime()],
                 )));
             visited.add(param);
           }

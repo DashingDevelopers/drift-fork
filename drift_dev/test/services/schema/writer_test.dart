@@ -14,7 +14,7 @@ import '../../analysis/test_utils.dart';
 
 void main() {
   test('writer integration test', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'a|lib/a.drift': '''
 import 'main.dart';
 
@@ -40,7 +40,7 @@ CREATE TRIGGER delete_empty_groups AFTER DELETE ON group_members BEGIN
     WHERE NOT EXISTS (SELECT * FROM group_members WHERE "group" = "groups".id);
 END;
 
-CREATE INDEX groups_name ON "groups"(name);
+CREATE INDEX groups_name ON "groups"(name, upper(name));
 
 CREATE VIEW my_view WITH MyViewRow AS SELECT id FROM "groups";
 
@@ -108,7 +108,7 @@ class Database {}
         forSchema: 1,
         writeCompanions: true,
         writeDataClasses: true,
-        imports: ImportManagerForPartFiles(),
+        imports: NullImportManager(),
       ),
     );
 
@@ -368,9 +368,9 @@ const expected = r'''
             "data": {
                 "on": 0,
                 "name": "groups_name",
-                "sql": "CREATE INDEX groups_name ON \"groups\"(name);",
+                "sql": "CREATE INDEX groups_name ON \"groups\"(name, upper(name));",
                 "unique": false,
-                "columns": ["name"]
+                "columns": []
             }
         },
         {

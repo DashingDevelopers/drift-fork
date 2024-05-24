@@ -20,6 +20,22 @@ class AstPreparingVisitor extends RecursiveVisitor<void, void> {
   }
 
   @override
+  void visitAggregateFunctionInvocation(
+      AggregateFunctionInvocation e, void arg) {
+    if (e.orderBy != null &&
+        context.engineOptions.version < SqliteVersion.v3_44) {
+      context.reportError(AnalysisError(
+        type: AnalysisErrorType.notSupportedInDesiredVersion,
+        message:
+            'ORDER BY in aggregate functions require sqlite 3.44 or later.',
+        relevantNode: e.orderBy,
+      ));
+    }
+
+    super.visitAggregateFunctionInvocation(e, arg);
+  }
+
+  @override
   void defaultInsertSource(InsertSource e, void arg) {
     e.scope = SourceScope(e.parent!.statementScope);
     visitChildren(e, arg);
@@ -121,8 +137,10 @@ class AstPreparingVisitor extends RecursiveVisitor<void, void> {
   }
 
   @override
-  void visitForeignKeyClause(ForeignKeyClause e, void arg) {
-    e.scope = SingleTableReferenceScope(e.scope);
+  void visitInExpression(InExpression e, void arg) {
+    // The RHS can use everything from the parent scope, but it can't add new
+    // table references that would be visible to others.
+    e.scope = StatementScope(e.scope);
     visitChildren(e, arg);
   }
 
@@ -224,5 +242,21 @@ class AstPreparingVisitor extends RecursiveVisitor<void, void> {
     }
 
     super.visitDriftSpecificNode(e, arg);
+  }
+
+  @override
+  void visitWindowFunctionInvocation(WindowFunctionInvocation e, void arg) {
+    // Window functions can't use ORDER BY in their arguments:
+    // https://github.com/sqlite/sqlite/blob/85b1f5c2f6a05ba151496122fc62b10d560498ca/src/expr.c#L1231-L1235
+    if (e.orderBy != null) {
+      context.reportError(AnalysisError(
+        type: AnalysisErrorType.synctactic,
+        message:
+            'Window functions may not use `ORDER BY` in their parameter list',
+        relevantNode: e.orderBy,
+      ));
+    }
+
+    super.visitWindowFunctionInvocation(e, arg);
   }
 }

@@ -158,7 +158,7 @@ class SchemaWriter {
     return {
       'name': column.nameInSql,
       'getter_name': column.nameInDart,
-      'moor_type': column.sqlType.toSerializedString(),
+      'moor_type': column.sqlType.builtin.toSerializedString(),
       'nullable': column.nullable,
       'customConstraints': column.customConstraints,
       if (constraints[SqlDialect.sqlite]!.isNotEmpty &&
@@ -171,8 +171,7 @@ class SchemaWriter {
       if (column.typeConverter != null)
         'type_converter': {
           'dart_expr': column.typeConverter!.expression.toString(),
-          'dart_type_name': column.typeConverter!.dartType
-              .getDisplayString(withNullability: false),
+          'dart_type_name': column.typeConverter!.dartType.getDisplayString(),
         }
     };
   }
@@ -467,7 +466,7 @@ class SchemaReader {
     // Note: Not including client default code because that usually depends on
     // imports from the database.
     return DriftColumn(
-      sqlType: columnType,
+      sqlType: ColumnType.drift(columnType),
       nullable: nullable,
       nameInSql: name,
       nameInDart: getterName ?? ReCase(name).camelCase,

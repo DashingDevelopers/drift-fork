@@ -8,7 +8,7 @@ import '../../test_utils.dart';
 
 void main() {
   test('view created', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'foo|lib/table.drift': '''
         CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL);
       ''',
@@ -23,8 +23,8 @@ void main() {
     final view = file.analyzedElements.single as DriftView;
 
     expect(view.columns, [
-      isA<DriftColumn>()
-          .having((e) => e.sqlType, 'sqlType', drift.DriftSqlType.string)
+      isA<DriftColumn>().having(
+          (e) => e.sqlType.builtin, 'sqlType', drift.DriftSqlType.string)
     ]);
 
     expect(view.references,
@@ -34,7 +34,7 @@ void main() {
   });
 
   test('view created from another view', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'foo|lib/table.drift': '''
         CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL);
       ''',
@@ -56,8 +56,8 @@ void main() {
 
     expect(parentView.columns, hasLength(2));
     expect(childView.columns, [
-      isA<DriftColumn>()
-          .having((e) => e.sqlType, 'sqlType', drift.DriftSqlType.string)
+      isA<DriftColumn>().having(
+          (e) => e.sqlType.builtin, 'sqlType', drift.DriftSqlType.string)
     ]);
 
     expect(parentView.references.map((e) => e.id.name), ['t']);
@@ -68,7 +68,7 @@ void main() {
   });
 
   test('view without table', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'foo|lib/a.drift': '''
         CREATE VIEW random_view AS
         SELECT name FROM t WHERE id % 2 = 0;
@@ -82,7 +82,7 @@ void main() {
   });
 
   test('does not allow nested columns', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'foo|lib/a.drift': '''
         CREATE TABLE foo (bar INTEGER NOT NULL PRIMARY KEY);
 
@@ -102,7 +102,7 @@ void main() {
   test('imported views are analyzed', () async {
     // Regression test for https://github.com/simolus3/drift/issues/1639
 
-    final testState = TestBackend.inTest({
+    final testState = await TestBackend.inTest({
       'a|lib/imported.drift': '''
 CREATE TABLE a (
   b TEXT NOT NULL
@@ -124,7 +124,7 @@ query: SELECT * FROM my_view;
   });
 
   test('picks valid Dart names for columns', () async {
-    final testState = TestBackend.inTest({
+    final testState = await TestBackend.inTest({
       'a|lib/a.drift': '''
 CREATE VIEW IF NOT EXISTS repro AS
   SELECT 1,
@@ -148,7 +148,7 @@ CREATE VIEW IF NOT EXISTS repro AS
   });
 
   test('copies type converter from table', () async {
-    final backend = TestBackend.inTest({
+    final backend = await TestBackend.inTest({
       'a|lib/a.drift': '''
 import 'converter.dart';
 
@@ -185,7 +185,7 @@ TypeConverter<Object, int> createConverter() => throw UnimplementedError();
   });
 
   test('can declare type converter on view column', () async {
-    final backend = TestBackend.inTest({
+    final backend = await TestBackend.inTest({
       'a|lib/a.drift': '''
 import 'converter.dart';
 
@@ -223,7 +223,7 @@ TypeConverter<Object, int> createConverter() => throw UnimplementedError();
   });
 
   test('supports enum columns', () async {
-    final backend = TestBackend.inTest({
+    final backend = await TestBackend.inTest({
       'a|lib/a.drift': '''
 import 'enums.dart';
 
@@ -280,7 +280,7 @@ enum MyEnum {
       String expectedSql,
       DriftOptions options,
     ) async {
-      final backend = TestBackend.inTest(
+      final backend = await TestBackend.inTest(
         {'a|lib/a.drift': definition},
         options: options,
       );
@@ -290,7 +290,7 @@ enum MyEnum {
       final view = state.analyzedElements.single as DriftView;
       final column = view.columns.single;
 
-      expect(column.sqlType, expectedType);
+      expect(column.sqlType.builtin, expectedType);
       expect(
         view.source,
         isA<SqlViewSource>().having(

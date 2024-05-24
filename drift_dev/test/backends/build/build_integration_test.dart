@@ -22,14 +22,53 @@ class MyDatabase {}
       'a|lib/a.drift': '''
 import 'b.drift';
 
-CREATE INDEX b_idx /* comment should be stripped */ ON b (foo);
+CREATE INDEX b_idx /* comment should be stripped */ ON b (foo, upper(foo));
 ''',
       'a|lib/b.drift': 'CREATE TABLE b (foo TEXT);',
     });
 
     checkOutputs({
       'a|lib/main.drift.dart': decodedMatches(contains(
-          "late final Index bIdx = Index('b_idx', 'CREATE INDEX b_idx ON b (foo)')")),
+          'late final Index bIdx =\n'
+          "      Index('b_idx', 'CREATE INDEX b_idx ON b (foo, upper(foo))')")),
+    }, result.dartOutputs, result.writer);
+  });
+
+  test('keep import aliases', () async {
+    final result = await emulateDriftBuild(
+      inputs: {
+        'a|lib/main.dart': r'''
+import 'dart:io' as io;
+import 'package:drift/drift.dart' as drift;
+import 'tables.dart' as tables;
+
+@drift.DriftDatabase(tables: [tables.Files])
+class MyDatabase extends _$MyDatabase {}
+''',
+        'a|lib/tables.dart': '''
+import 'package:drift/drift.dart';
+
+class Files extends Table {
+  TextColumn get content => text()();
+}
+''',
+      },
+      logger: loggerThat(neverEmits(anything)),
+    );
+
+    checkOutputs({
+      'a|lib/main.drift.dart': decodedMatches(
+        allOf(
+          contains(
+            r'class $FilesTable extends tables.Files with '
+            r'drift.TableInfo<$FilesTable, File>',
+          ),
+          contains(
+            'class File extends drift.DataClass implements '
+            'drift.Insertable<File>',
+          ),
+        ),
+      ),
     }, result.dartOutputs, result.writer);
   });
 
@@ -324,6 +363,44 @@ TypeConverter<Object, int> myConverter() => throw UnimplementedError();
     );
   });
 
+  test('can restore types from multiple hints', () async {
+    final result = await emulateDriftBuild(
+      inputs: {
+        'a|lib/a.drift': '''
+import 'table.dart';
+
+CREATE VIEW my_view AS SELECT foo FROM my_table;
+''',
+        'a|lib/table.dart': '''
+import 'package:drift/drift.dart';
+
+class MyTable extends Table {
+  Int64Column get foo => int64().map(myConverter())();
+}
+
+enum MyEnum {
+  foo, bar
+}
+
+TypeConverter<Object, BigInt> myConverter() => throw UnimplementedError();
+''',
+      },
+      modularBuild: true,
+      logger: loggerThat(neverEmits(anything)),
+    );
+
+    checkOutputs(
+      {
+        'a|lib/a.drift.dart': decodedMatches(contains(
+            'foo: i2.\$MyTableTable.\$converterfoo.fromSql(attachedDatabase.typeMapping\n'
+            '          .read(i0.DriftSqlType.bigInt')),
+        'a|lib/table.drift.dart': decodedMatches(anything),
+      },
+      result.dartOutputs,
+      result.writer,
+    );
+  });
+
   test('supports @create queries in modular generation', () async {
     final result = await emulateDriftBuild(
       inputs: {
@@ -501,11 +578,15 @@ class MyDatabase {
     };
     final outputs = await emulateDriftBuild(inputs: inputs);
     final readAssets = outputs.readAssetsByBuilder;
+    // Allow reading SDK or other package assets to set up the analyzer.
+    final isFromExternalPackage =
+        isA<AssetId>().having((e) => e.package, 'package', isNot('a'));
 
     Matcher onlyReadsJsonsAnd(dynamic other) {
       return everyElement(
         anyOf(
           isA<AssetId>().having((e) => e.extension, 'extension', '.json'),
+          isFromExternalPackage,
           other,
         ),
       );
@@ -529,7 +610,8 @@ class MyDatabase {
     // However, the discover builder should not read other drift files.
     for (final input in inputs.keys) {
       if (input.endsWith('.drift')) {
-        expectReadsForBuilder(input, DriftDiscover, [makeAssetId(input)]);
+        expectReadsForBuilder(input, DriftDiscover,
+            everyElement(anyOf(makeAssetId(input), isFromExternalPackage)));
       } else {
         expectReadsForBuilder(
           input,
@@ -575,6 +657,147 @@ class MyDatabase {
     expect(readAssets, isEmpty);
   });
 
+  test('generates views from drift tables', () async {
+    final debugLogger = Logger('driftBuild');
+    debugLogger.onRecord.listen((e) => print(e.message));
+
+    final result = await emulateDriftBuild(
+        inputs: {
+          'a|lib/drift/datastore_db.dart': '''
+import 'package:drift/drift.dart';
+part 'datastore_db.g.dart';
+mixin AutoIncrement on Table {
+  IntColumn get id => integer().autoIncrement()();
+}
+@DataClassName('TodoEntry')
+class TodosTable extends Table with AutoIncrement {
+  @override
+  String get tableName => 'todos';
+  TextColumn get title => text().withLength(min: 4, max: 16).nullable()();
+  TextColumn get content => text()();
+  @JsonKey('target_date')
+  DateTimeColumn get targetDate => dateTime().nullable().unique()();
+  IntColumn get category => integer().references(Categories, #id).nullable()();
+  TextColumn get status => textEnum<TodoStatus>().nullable()();
+
+  @override
+  List<Set<Column>>? get uniqueKeys => [
+    {title, category},
+    {title, targetDate},
+  ];
+}
+
+enum TodoStatus { open, workInProgress, done }
+
+class Users extends Table with AutoIncrement {
+  TextColumn get name => text().withLength(min: 6, max: 32).unique()();
+  BoolColumn get isAwesome => boolean().withDefault(const Constant(true))();
+
+  BlobColumn get profilePicture => blob()();
+  DateTimeColumn get creationTime => dateTime()
+  // ignore: recursive_getters
+      .check(creationTime.isBiggerThan(Constant(DateTime.utc(1950))))
+      .withDefault(currentDateAndTime)();
+}
+
+@DataClassName('Category')
+class Categories extends Table with AutoIncrement {
+  TextColumn get description =>
+      text().named('desc').customConstraint('NOT NULL UNIQUE')();
+  IntColumn get priority =>
+      intEnum<CategoryPriority>().withDefault(const Constant(0))();
+
+  TextColumn get descriptionInUpperCase =>
+      text().generatedAs(description.upper())();
+}
+
+enum CategoryPriority { low, medium, high }
+abstract class CategoryTodoCountView extends View {
+  TodosTable get todos;
+  Categories get categories;
+
+  Expression<int> get categoryId => categories.id;
+  Expression<String> get description =>
+      categories.description + const Variable('!');
+  Expression<int> get itemCount => todos.id.count();
+
+  @override
+  Query as() => select([categoryId, description, itemCount])
+      .from(categories)
+      .join([innerJoin(todos, todos.category.equalsExp(categories.id))])
+    ..groupBy([categories.id]);
+}
+abstract class ComboGroupView extends View {
+  late final DatastoreDb attachedDatabase;
+  IntColumn get comboGroupID => attachedDatabase.comboGroup.comboGroupID;
+  IntColumn get objectNumber => attachedDatabase.comboGroup.objectNumber;
+  TextColumn get stringText => attachedDatabase.stringTable.stringText;
+  // ComboGroup get comboGroup => attachedDatabase.comboGroup;
+  // late final ComboGroup comboGroup;
+  @override
+  Query as() => select([
+    comboGroupID,
+    objectNumber,
+    stringText,
+  ]).from(attachedDatabase.comboGroup).join([
+    innerJoin(
+        attachedDatabase.stringTable,
+        attachedDatabase.stringTable.stringNumberID
+            .equalsExp(attachedDatabase.comboGroup.nameID)),
+  ]);
+}
+
+@DriftDatabase(
+  tables: [TodosTable, Categories],
+  include: {'combo_group.drift','string_table.drift'},
+  views: [CategoryTodoCountView,ComboGroupView],
+)
+class DatastoreDb extends _\$DatastoreDb {
+  DatastoreDb(super.e);
+  @override
+  int get schemaVersion => 1;
+}
+        ''',
+          'a|lib/drift/combo_group.drift': '''
+        CREATE TABLE [COMBO_GROUP](
+	[ComboGroupID] [int] NOT NULL PRIMARY KEY,
+	[HierStrucID] [bigint] NULL,
+	[ObjectNumber] [int] NULL,
+	[NameID] [bigint] NULL,
+	[OptionBits] [nvarchar](8) NULL,
+	[SluIndex] [int] NULL,
+	[HhtSluIndex] [int] NULL);
+	''',
+          'a|lib/drift/string_table.drift': '''
+CREATE TABLE [STRING_TABLE](
+	[StringID] [bigint] NOT NULL PRIMARY KEY,
+	[StringNumberID] [bigint] NULL,
+	[LangID] [int] NULL,
+	[IsVisible] [bit] NOT NULL DEFAULT ((1)),
+	[IsDeleted] [bit] NOT NULL DEFAULT ((0)),
+	[HierStrucID] [bigint] NULL,
+	[PosRef] [bigint] NULL,
+	[StringText] [nvarchar](128) NULL
+);
+	''',
+        },
+        options: BuilderOptions({'assume_correct_reference': true}),
+        logger: debugLogger);
+
+    checkOutputs(
+      {
+        'a|lib/drift/datastore_db.drift.dart': decodedMatches(
+          allOf(
+            contains(
+                r'attachedDatabase.selectOnly(attachedDatabase.comboGroup)'),
+          ),
+        ),
+      },
+      result.dartOutputs,
+      result.writer,
+    );
+  });
+
   group('reports issues', () {
     for (final fatalWarnings in [false, true]) {
       group('fatalWarnings: $fatalWarnings', () {
@@ -586,8 +809,7 @@ class MyDatabase {
         Future<void> runTest(String source, expectedMessage) async {
           final build = emulateDriftBuild(
             inputs: {'a|lib/a.drift': source},
-            logger: loggerThat(emits(isA<LogRecord>()
-                .having((e) => e.message, 'message', expectedMessage))),
+            logger: loggerThat(emits(record(expectedMessage))),
             modularBuild: true,
             options: options,
           );
@@ -621,5 +843,41 @@ class MyDatabase {
         });
       });
     }
+  });
+
+  test('warns about missing imports', () async {
+    await emulateDriftBuild(
+      inputs: {
+        'a|lib/main.drift': '''
+import 'package:b/b.drift';
+import 'package:a/missing.drift';
+
+CREATE TABLE users (
+  another INTEGER REFERENCES b(foo)
+);
+''',
+        'b|lib/b.drift': '''
+CREATE TABLE b (foo INTEGER);
+''',
+      },
+      logger: loggerThat(
+        emitsInAnyOrder(
+          [
+            record(
+              allOf(
+                contains(
+                    "The imported file, `package:b/b.drift`, does not exist or can't be imported"),
+                contains('Note: When importing drift files across packages'),
+              ),
+            ),
+            record(allOf(
+              contains('package:a/missing.drift'),
+              isNot(contains('Note: When')),
+            )),
+            record(contains('`b` could not be found in any import.')),
+          ],
+        ),
+      ),
+    );
   });
 }

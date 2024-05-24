@@ -135,12 +135,20 @@ class DriftWebDriver {
         'open(arguments[0], arguments[1])', [implementation?.name]);
   }
 
+  Future<void> closeDatabase() async {
+    await driver.executeAsync("close('', arguments[0])", []);
+  }
+
   Future<void> insertIntoDatabase() async {
     await driver.executeAsync('insert("", arguments[0])', []);
   }
 
   Future<int> get amountOfRows async {
     return await driver.executeAsync('get_rows("", arguments[0])', []);
+  }
+
+  Future<bool> get hasTable async {
+    return await driver.executeAsync('has_table("", arguments[0])', []);
   }
 
   Future<void> waitForTableUpdate() async {
@@ -155,6 +163,17 @@ class DriftWebDriver {
 
     if (result != true) {
       throw 'Could not set initialization mode';
+    }
+  }
+
+  Future<void> setSchemaVersion(int version) async {
+    final result = await driver.executeAsync(
+      'set_schema_version(arguments[0], arguments[1])',
+      [version.toString()],
+    );
+
+    if (result != true) {
+      throw 'Could not set schema version';
     }
   }
 

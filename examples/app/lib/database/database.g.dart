@@ -32,9 +32,10 @@ class $CategoriesTable extends Categories
   @override
   List<GeneratedColumn> get $columns => [id, name, color];
   @override
-  String get aliasedName => _alias ?? 'categories';
+  String get aliasedName => _alias ?? actualTableName;
   @override
-  String get actualTableName => 'categories';
+  String get actualTableName => $name;
+  static const String $name = 'categories';
   @override
   VerificationContext validateIntegrity(Insertable<Category> instance,
       {bool isInserting = false}) {
@@ -88,8 +89,8 @@ class Category extends DataClass implements Insertable<Category> {
     map['id'] = Variable<int>(id);
     map['name'] = Variable<String>(name);
     {
-      final converter = $CategoriesTable.$convertercolor;
-      map['color'] = Variable<int>(converter.toSql(color));
+      map['color'] =
+          Variable<int>($CategoriesTable.$convertercolor.toSql(color));
     }
     return map;
   }
@@ -193,8 +194,8 @@ class CategoriesCompanion extends UpdateCompanion<Category> {
       map['name'] = Variable<String>(name.value);
     }
     if (color.present) {
-      final converter = $CategoriesTable.$convertercolor;
-      map['color'] = Variable<int>(converter.toSql(color.value));
+      map['color'] =
+          Variable<int>($CategoriesTable.$convertercolor.toSql(color.value));
     }
     return map;
   }
@@ -249,9 +250,10 @@ class $TodoEntriesTable extends TodoEntries
   @override
   List<GeneratedColumn> get $columns => [id, description, category, dueDate];
   @override
-  String get aliasedName => _alias ?? 'todo_entries';
+  String get aliasedName => _alias ?? actualTableName;
   @override
-  String get actualTableName => 'todo_entries';
+  String get actualTableName => $name;
+  static const String $name = 'todo_entries';
   @override
   VerificationContext validateIntegrity(Insertable<TodoEntry> instance,
       {bool isInserting = false}) {
@@ -470,8 +472,8 @@ class TodoEntriesCompanion extends UpdateCompanion<TodoEntry> {
 
 class TextEntries extends Table
     with
-        TableInfo<TextEntries, TextEntrie>,
-        VirtualTableInfo<TextEntries, TextEntrie> {
+        TableInfo<TextEntries, TextEntry>,
+        VirtualTableInfo<TextEntries, TextEntry> {
   @override
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
@@ -486,11 +488,12 @@ class TextEntries extends Table
   @override
   List<GeneratedColumn> get $columns => [description];
   @override
-  String get aliasedName => _alias ?? 'text_entries';
+  String get aliasedName => _alias ?? actualTableName;
   @override
-  String get actualTableName => 'text_entries';
+  String get actualTableName => $name;
+  static const String $name = 'text_entries';
   @override
-  VerificationContext validateIntegrity(Insertable<TextEntrie> instance,
+  VerificationContext validateIntegrity(Insertable<TextEntry> instance,
       {bool isInserting = false}) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
@@ -508,9 +511,9 @@ class TextEntries extends Table
   @override
   Set<GeneratedColumn> get $primaryKey => const {};
   @override
-  TextEntrie map(Map<String, dynamic> data, {String? tablePrefix}) {
+  TextEntry map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return TextEntrie(
+    return TextEntry(
       description: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}description'])!,
     );
@@ -528,9 +531,9 @@ class TextEntries extends Table
       'fts5(description, content=todo_entries, content_rowid=id)';
 }
 
-class TextEntrie extends DataClass implements Insertable<TextEntrie> {
+class TextEntry extends DataClass implements Insertable<TextEntry> {
   final String description;
-  const TextEntrie({required this.description});
+  const TextEntry({required this.description});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -544,10 +547,10 @@ class TextEntrie extends DataClass implements Insertable<TextEntrie> {
     );
   }
 
-  factory TextEntrie.fromJson(Map<String, dynamic> json,
+  factory TextEntry.fromJson(Map<String, dynamic> json,
       {ValueSerializer? serializer}) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
-    return TextEntrie(
+    return TextEntry(
       description: serializer.fromJson<String>(json['description']),
     );
   }
@@ -559,12 +562,12 @@ class TextEntrie extends DataClass implements Insertable<TextEntrie> {
     };
   }
 
-  TextEntrie copyWith({String? description}) => TextEntrie(
+  TextEntry copyWith({String? description}) => TextEntry(
         description: description ?? this.description,
       );
   @override
   String toString() {
-    return (StringBuffer('TextEntrie(')
+    return (StringBuffer('TextEntry(')
           ..write('description: $description')
           ..write(')'))
         .toString();
@@ -575,10 +578,10 @@ class TextEntrie extends DataClass implements Insertable<TextEntrie> {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      (other is TextEntrie && other.description == this.description);
+      (other is TextEntry && other.description == this.description);
 }
 
-class TextEntriesCompanion extends UpdateCompanion<TextEntrie> {
+class TextEntriesCompanion extends UpdateCompanion<TextEntry> {
   final Value<String> description;
   final Value<int> rowid;
   const TextEntriesCompanion({
@@ -589,7 +592,7 @@ class TextEntriesCompanion extends UpdateCompanion<TextEntrie> {
     required String description,
     this.rowid = const Value.absent(),
   }) : description = Value(description);
-  static Insertable<TextEntrie> custom({
+  static Insertable<TextEntry> custom({
     Expression<String>? description,
     Expression<int>? rowid,
   }) {

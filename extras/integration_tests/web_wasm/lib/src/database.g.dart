@@ -27,9 +27,10 @@ class $TestTableTable extends TestTable
   @override
   List<GeneratedColumn> get $columns => [id, content];
   @override
-  String get aliasedName => _alias ?? 'test_table';
+  String get aliasedName => _alias ?? actualTableName;
   @override
-  String get actualTableName => 'test_table';
+  String get actualTableName => $name;
+  static const String $name = 'test_table';
   @override
   VerificationContext validateIntegrity(Insertable<TestTableData> instance,
       {bool isInserting = false}) {
@@ -177,10 +178,105 @@ class TestTableCompanion extends UpdateCompanion<TestTableData> {
 
 abstract class _$TestDatabase extends GeneratedDatabase {
   _$TestDatabase(QueryExecutor e) : super(e);
+  _$TestDatabaseManager get managers => _$TestDatabaseManager(this);
   late final $TestTableTable testTable = $TestTableTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
   List<DatabaseSchemaEntity> get allSchemaEntities => [testTable];
+}
+
+typedef $$TestTableTableInsertCompanionBuilder = TestTableCompanion Function({
+  Value<int> id,
+  required String content,
+});
+typedef $$TestTableTableUpdateCompanionBuilder = TestTableCompanion Function({
+  Value<int> id,
+  Value<String> content,
+});
+
+class $$TestTableTableTableManager extends RootTableManager<
+    _$TestDatabase,
+    $TestTableTable,
+    TestTableData,
+    $$TestTableTableFilterComposer,
+    $$TestTableTableOrderingComposer,
+    $$TestTableTableProcessedTableManager,
+    $$TestTableTableInsertCompanionBuilder,
+    $$TestTableTableUpdateCompanionBuilder> {
+  $$TestTableTableTableManager(_$TestDatabase db, $TestTableTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$TestTableTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$TestTableTableOrderingComposer(ComposerState(db, table)),
+          getChildManagerBuilder: (p) =>
+              $$TestTableTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<int> id = const Value.absent(),
+            Value<String> content = const Value.absent(),
+          }) =>
+              TestTableCompanion(
+            id: id,
+            content: content,
+          ),
+          getInsertCompanionBuilder: ({
+            Value<int> id = const Value.absent(),
+            required String content,
+          }) =>
+              TestTableCompanion.insert(
+            id: id,
+            content: content,
+          ),
+        ));
+}
+
+class $$TestTableTableProcessedTableManager extends ProcessedTableManager<
+    _$TestDatabase,
+    $TestTableTable,
+    TestTableData,
+    $$TestTableTableFilterComposer,
+    $$TestTableTableOrderingComposer,
+    $$TestTableTableProcessedTableManager,
+    $$TestTableTableInsertCompanionBuilder,
+    $$TestTableTableUpdateCompanionBuilder> {
+  $$TestTableTableProcessedTableManager(super.$state);
+}
+
+class $$TestTableTableFilterComposer
+    extends FilterComposer<_$TestDatabase, $TestTableTable> {
+  $$TestTableTableFilterComposer(super.$state);
+  ColumnFilters<int> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get content => $state.composableBuilder(
+      column: $state.table.content,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+}
+
+class $$TestTableTableOrderingComposer
+    extends OrderingComposer<_$TestDatabase, $TestTableTable> {
+  $$TestTableTableOrderingComposer(super.$state);
+  ColumnOrderings<int> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get content => $state.composableBuilder(
+      column: $state.table.content,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
+
+class _$TestDatabaseManager {
+  final _$TestDatabase _db;
+  _$TestDatabaseManager(this._db);
+  $$TestTableTableTableManager get testTable =>
+      $$TestTableTableTableManager(_db, _db.testTable);
 }

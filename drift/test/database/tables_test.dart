@@ -59,12 +59,15 @@ void main() {
     expect(
       todo,
       const TodoEntry(
-        id: 1,
+        id: RowId(1),
         title: 'some title',
         content: 'do this',
         targetDate: null,
         category: null,
       ),
     );
+  });
+  test('Table classes expose the name of the sql table', () {
+    expect($TodosTableTable.$name, 'todos');
   });
 }

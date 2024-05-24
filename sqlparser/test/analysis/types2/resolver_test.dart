@@ -14,13 +14,18 @@ void main() {
     return TypeResolver(TypeInferenceSession(context))..run(context.root);
   }
 
-  ResolvedType? resolveFirstVariable(String sql,
+  Iterable<ResolvedType?> resolveVariableTypes(String sql,
       {AnalyzeStatementOptions? options}) {
     final resolver = obtainResolver(sql, options: options);
     final session = resolver.session;
-    final variable =
-        session.context.root.allDescendants.whereType<Variable>().first;
-    return session.typeOf(variable);
+    return session.context.root.allDescendants
+        .whereType<Variable>()
+        .map((variable) => session.typeOf(variable));
+  }
+
+  ResolvedType? resolveFirstVariable(String sql,
+      {AnalyzeStatementOptions? options}) {
+    return resolveVariableTypes(sql, options: options).first;
   }
 
   ResolvedType? resolveResultColumn(String sql) {
@@ -108,7 +113,7 @@ void main() {
 
     test('infers condition', () {
       expect(resolveFirstVariable('SELECT IIF(?, 0, 1)'),
-          const ResolvedType(type: BasicType.int, hint: IsBoolean()));
+          const ResolvedType(type: BasicType.int, hints: [IsBoolean()]));
     });
   });
 
@@ -183,7 +188,7 @@ void main() {
 
       expect(resultType, const ResolvedType(type: BasicType.text));
       expect(argType,
-          const ResolvedType(type: BasicType.text, hint: IsDateTime()));
+          const ResolvedType(type: BasicType.text, hints: [IsDateTime()]));
     });
 
     test('octet_length', () {
@@ -292,13 +297,39 @@ WITH RECURSIVE
     expect(type, const ResolvedType(type: BasicType.int));
   });
 
+  test('handles multi column set components in updates', () {
+    final variableTypes =
+        resolveVariableTypes('UPDATE demo SET (id, content) = (?, ?)');
+    expect(variableTypes.first, const ResolvedType(type: BasicType.int));
+    expect(
+        variableTypes.elementAt(1), const ResolvedType(type: BasicType.text));
+  });
+
+  test('handles multi column set components in updates with select subquery',
+      () {
+    final variableTypes =
+        resolveVariableTypes('UPDATE demo SET (id, content) = (SELECT ?,?)');
+    expect(variableTypes.first, const ResolvedType(type: BasicType.int));
+    expect(
+        variableTypes.elementAt(1), const ResolvedType(type: BasicType.text));
+  });
+
+  test('handles multi column set components in updates with values subquery',
+      () {
+    final variableTypes =
+        resolveVariableTypes('UPDATE demo SET (id, content) = (VALUES(?,?))');
+    expect(variableTypes.first, const ResolvedType(type: BasicType.int));
+    expect(
+        variableTypes.elementAt(1), const ResolvedType(type: BasicType.text));
+  });
+
   test('infers offsets in frame specs', () {
     final type = resolveFirstVariable('SELECT SUM(id) OVER (ROWS ? PRECEDING)');
     expect(type, const ResolvedType(type: BasicType.int));
   });
 
   test('resolves type hints from between expressions', () {
-    const dateTime = ResolvedType(type: BasicType.int, hint: IsDateTime());
+    const dateTime = ResolvedType(type: BasicType.int, hints: [IsDateTime()]);
     final session = obtainResolver(
       'SELECT 1 WHERE :date BETWEEN :start AND :end',
       options: const AnalyzeStatementOptions(

@@ -5,7 +5,11 @@ import 'package:drift_dev/src/services/schema/verifier_impl.dart';
 import 'package:test/test.dart';
 
 void main() {
-  final verifier = SchemaVerifier(_TestHelper());
+  final verifier = SchemaVerifier(
+    _TestHelper(),
+    setup: (rawDb) => rawDb.createFunction(
+        functionName: 'test_function', function: (args) => 1),
+  );
 
   group('startAt', () {
     test('starts at the requested version', () async {
@@ -14,6 +18,19 @@ void main() {
         expect(details.wasCreated, isFalse, reason: 'was opened before');
         expect(details.hadUpgrade, isFalse, reason: 'no upgrade expected');
       }));
+    });
+
+    test('registers custom functions', () async {
+      final db = (await verifier.startAt(17)).executor;
+      await db.ensureOpen(_DelegatedUser(17, (_, details) async {}));
+      await db.runSelect('select test_function()', []);
+    });
+
+    test('disables double-quoted string literals', () async {
+      final db = (await verifier.startAt(17)).executor;
+      await db.ensureOpen(_DelegatedUser(17, (_, details) async {}));
+      await expectLater(db.runSelect('select "why_would_this_be_a_string"', []),
+          throwsA(isA<SqliteException>()));
     });
   });
 
@@ -80,7 +97,7 @@ class _TestDatabase extends GeneratedDatabase {
   @override
   MigrationStrategy migration = MigrationStrategy();
 
-  _TestDatabase(QueryExecutor executor, this.schemaVersion) : super(executor);
+  _TestDatabase(super.executor, this.schemaVersion);
 
   @override
   Iterable<TableInfo<Table, DataClass>> get allTables {

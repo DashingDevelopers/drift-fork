@@ -8,14 +8,15 @@ import '../test_utils.dart';
 void main() {
   late TestBackend tester;
 
-  setUpAll(() => tester = TestBackend({}));
+  setUpAll(() async => tester = await TestBackend.init({}));
   tearDownAll(() => tester.dispose());
 
   group('from AST', () {
-    final testUri = Uri.parse('package:a/test.dart');
+    int testCount = 0;
 
     Future<void> checkTransformation(String sourceExpression,
         String expectedResult, Map<String, String> expectedImports) async {
+      final testUri = Uri.parse('package:a/test_${testCount++}.dart');
       final expression =
           await tester.resolveExpression(testUri, sourceExpression, const []);
       final annotated = AnnotatedDartCode.ast(expression);

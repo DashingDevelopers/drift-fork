@@ -39,6 +39,7 @@ class NodeSqlBuilder extends AstVisitor<void, void> {
 
     symbol('(');
     visit(e.parameters, arg);
+    visitNullable(e.orderBy, arg);
     symbol(')');
 
     if (e.filter != null) {
@@ -202,6 +203,9 @@ class NodeSqlBuilder extends AstVisitor<void, void> {
         keyword(TokenType.not);
         keyword(TokenType.$null);
         _conflictClause(notNull.onConflict);
+      },
+      nullable: (nullable) {
+        keyword(TokenType.$null);
       },
       unique: (unique) {
         keyword(TokenType.unique);
@@ -424,6 +428,7 @@ class NodeSqlBuilder extends AstVisitor<void, void> {
     _ifNotExists(e.ifNotExists);
 
     identifier(e.viewName);
+    e.driftTableName?.accept(this, arg);
 
     if (e.columns != null) {
       symbol('(', spaceBefore: true);
@@ -1061,10 +1066,19 @@ class NodeSqlBuilder extends AstVisitor<void, void> {
   }
 
   @override
-  void visitSetComponent(SetComponent e, void arg) {
+  void visitSingleColumnSetComponent(SingleColumnSetComponent e, void arg) {
     visit(e.column, arg);
     symbol('=', spaceBefore: true, spaceAfter: true);
     visit(e.expression, arg);
+  }
+
+  @override
+  void visitMultiColumnSetComponent(MultiColumnSetComponent e, void arg) {
+    symbol('(', spaceBefore: true);
+    _join(e.columns, ',');
+    symbol(')');
+    symbol('=', spaceBefore: true, spaceAfter: true);
+    visit(e.rowValue, arg);
   }
 
   @override
@@ -1100,6 +1114,9 @@ class NodeSqlBuilder extends AstVisitor<void, void> {
 
   @override
   void visitStringLiteral(StringLiteral e, void arg) {
+    if (e.isBinary) {
+      symbol('X', spaceBefore: true);
+    }
     _stringLiteral(e.value);
   }
 

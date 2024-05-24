@@ -3,15 +3,16 @@ import 'dart:convert';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:sqlparser/sqlparser.dart';
 
-import '../options.dart';
 import '../backend.dart';
 import '../drift_native_functions.dart';
+import '../options.dart';
 import '../resolver/dart/helper.dart';
 import '../resolver/discover.dart';
 import '../resolver/drift/sqlparser/mapping.dart';
 import '../resolver/file_analysis.dart';
 import '../resolver/queries/custom_known_functions.dart';
 import '../resolver/resolver.dart';
+import '../results/results.dart';
 import '../serializer.dart';
 import 'cache.dart';
 import 'error.dart';
@@ -57,14 +58,15 @@ class DriftAnalysisDriver {
   final DriftOptions options;
   final bool _isTesting;
 
-  late final TypeMapping typeMapping = TypeMapping(this);
+  Future<KnownDriftTypes?>? _loadingTypes;
 
   AnalysisResultCacheReader? cacheReader;
 
-  KnownDriftTypes? _knownTypes;
-
-  DriftAnalysisDriver(this.backend, this.options, {bool isTesting = false})
-      : _isTesting = isTesting;
+  DriftAnalysisDriver(
+    this.backend,
+    this.options, {
+    bool isTesting = false,
+  }) : _isTesting = isTesting;
 
   SqlEngine newSqlEngine() {
     return SqlEngine(
@@ -82,15 +84,36 @@ class DriftAnalysisDriver {
           if (options.hasModule(SqlModule.rtree)) const RTreeExtension(),
           if (options.hasModule(SqlModule.spellfix1))
             const Spellfix1Extension(),
+          if (options.hasModule(SqlModule.geopoly)) const GeopolyExtension(),
         ],
         version: options.sqliteVersion,
       ),
     );
   }
 
-  /// Loads types important for Drift analysis.
-  Future<KnownDriftTypes> loadKnownTypes() async {
-    return _knownTypes ??= await KnownDriftTypes.resolve(this);
+  Future<TypeMapping> get typeMapping async {
+    return TypeMapping(this, await knownTypesIfSupportedByBackend);
+  }
+
+  /// Returns [KnownDriftTypes] only if the current backend supports analyzing
+  /// Dart code.
+  Future<KnownDriftTypes?> get knownTypesIfSupportedByBackend {
+    return switch (_loadingTypes) {
+      null => _loadingTypes = KnownDriftTypes.resolve(backend),
+      var loading => loading.then((resolved) {
+          if (resolved == null) {
+            return null;
+          } else if (resolved.isStillConsistent) {
+            return resolved;
+          } else {
+            return _loadingTypes = KnownDriftTypes.resolve(backend);
+          }
+        }),
+    };
+  }
+
+  Future<KnownDriftTypes> get knownTypes async {
+    return (await knownTypesIfSupportedByBackend)!;
   }
 
   /// For a given file under [uri], attempts to restore serialized analysis
@@ -173,19 +196,48 @@ class DriftAnalysisDriver {
   }
 
   Future<void> _warnAboutUnresolvedImportsInDriftFile(FileState known) async {
-    final state = known.discovery;
-    if (state is DiscoveredDriftFile) {
-      for (final import in state.imports) {
-        final file = await findLocalElements(import.importedUri);
+    if (known.isDriftFile) {
+      final imports = known.imports?.toList();
+      if (imports == null) return;
+
+      var discovery = known.discovery as DiscoveredDriftFile?;
+      for (var i = 0; i < imports.length; i++) {
+        var (uri: importedUri, transitive: _) = imports[i];
+        final file = await findLocalElements(importedUri);
 
         if (file.isValidImport != true) {
-          known.errorsDuringDiscovery.add(
-            DriftAnalysisError.inDriftFile(
-              import.ast,
-              'The imported file, `${import.importedUri}`, does not exist or '
-              "can't be imported.",
-            ),
+          var crossesPackageBoundaries = false;
+
+          if (importedUri.scheme == 'package' &&
+              known.ownUri.scheme == 'package') {
+            final ownPackage = known.ownUri.pathSegments.first;
+            final importedPackage = importedUri.pathSegments.first;
+            crossesPackageBoundaries = ownPackage != importedPackage;
+          }
+
+          final message = StringBuffer(
+            'The imported file, `$importedUri`, does not exist or '
+            "can't be imported.",
           );
+          if (crossesPackageBoundaries) {
+            message
+              ..writeln()
+              ..writeln(
+                'Note: When importing drift files across packages, the '
+                'imported package needs to apply a drift builder. '
+                'See https://github.com/simolus3/drift/issues/2719 for '
+                'details.',
+              );
+          }
+
+          if (discovery == null) {
+            await discoverIfNecessary(known);
+            discovery = known.discovery as DiscoveredDriftFile;
+          }
+
+          var importAst = discovery.imports[i];
+          known.errorsDuringDiscovery.add(DriftAnalysisError.inDriftFile(
+              importAst.ast, message.toString()));
         }
       }
     }
@@ -198,21 +250,31 @@ class DriftAnalysisDriver {
   /// was discovered or because discovered elements have been imported from
   /// cache.
   Future<void> _analyzeLocalElements(FileState state) async {
-    assert(state.discovery != null || state.cachedDiscovery != null);
-
     for (final discovered in state.definedElements) {
-      if (!state.elementIsAnalyzed(discovered.ownId)) {
-        final resolver = DriftResolver(this);
+      await resolveElement(state, discovered.ownId);
+    }
+  }
 
-        try {
-          await resolver.resolveEntrypoint(discovered.ownId);
-        } catch (e, s) {
-          if (e is! CouldNotResolveElementException) {
-            backend.log.warning('Could not analyze ${discovered.ownId}', e, s);
+  Future<DriftElement?> resolveElement(
+      FileState state, DriftElementId id) async {
+    assert(state.discovery != null || state.cachedDiscovery != null);
+    assert(id.libraryUri == state.ownUri);
 
-            if (_isTesting) rethrow;
-          }
+    if (state.elementIsAnalyzed(id)) {
+      return state.analysis[id]?.result;
+    } else {
+      final resolver = DriftResolver(this);
+
+      try {
+        return await resolver.resolveEntrypoint(id);
+      } catch (e, s) {
+        if (e is! CouldNotResolveElementException) {
+          backend.log.warning('Could not analyze $id', e, s);
+
+          if (_isTesting) rethrow;
         }
+
+        return null;
       }
     }
   }
@@ -232,7 +294,7 @@ class DriftAnalysisDriver {
     await _warnAboutUnresolvedImportsInDriftFile(known);
 
     // Also make sure elements in transitive imports have been resolved.
-    final seen = cache.knownFiles.keys.toSet();
+    final seen = <Uri>{};
     final pending = <Uri>[known.ownUri];
 
     while (pending.isNotEmpty) {
@@ -318,6 +380,7 @@ abstract class AnalysisResultCacheReader {
   Future<CachedDiscoveryResults?> readDiscovery(Uri uri);
 
   Future<LibraryElement?> readTypeHelperFor(Uri uri);
+
   Future<String?> readElementCacheFor(Uri uri);
 }
 

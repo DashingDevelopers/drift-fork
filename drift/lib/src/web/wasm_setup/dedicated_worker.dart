@@ -1,27 +1,30 @@
 // ignore_for_file: public_member_api_docs
 
 import 'dart:async';
-import 'dart:html';
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
-import 'package:drift/wasm.dart';
-import 'package:js/js_util.dart';
 import 'package:sqlite3/wasm.dart';
+import 'package:web/web.dart'
+    show DedicatedWorkerGlobalScope, EventStreamProviders;
 
 import '../../utils/synchronized.dart';
 import 'protocol.dart';
 import 'shared.dart';
+import 'types.dart';
 
 class DedicatedDriftWorker {
   final DedicatedWorkerGlobalScope self;
   final Lock _checkCompatibility = Lock();
 
-  final DriftServerController _servers = DriftServerController();
+  final DriftServerController _servers;
   WasmCompatibility? _compatibility;
 
-  DedicatedDriftWorker(this.self);
+  DedicatedDriftWorker(this.self, WasmDatabaseSetup? setup)
+      : _servers = DriftServerController(setup);
 
   void start() {
-    self.onMessage.listen((event) {
+    EventStreamProviders.messageEvent.forTarget(self).listen((event) {
       final message = WasmInitializationMessage.read(event);
       _handleMessage(message);
     });
@@ -68,20 +71,20 @@ class DedicatedDriftWorker {
         }
 
         DedicatedWorkerCompatibilityResult(
-          supportsNestedWorkers: hasProperty(globalThis, 'Worker'),
+          supportsNestedWorkers: globalContext.has('Worker'),
           canAccessOpfs: supportsOpfs,
           supportsIndexedDb: supportsIndexedDb,
-          supportsSharedArrayBuffers:
-              hasProperty(globalThis, 'SharedArrayBuffer'),
+          supportsSharedArrayBuffers: globalContext.has('SharedArrayBuffer'),
           opfsExists: opfsExists,
           indexedDbExists: indexedDbExists,
           existingDatabases: existingDatabases,
+          version: ProtocolVersion.current,
         ).sendToClient(self);
       case ServeDriftDatabase():
         _servers.serve(message);
       case StartFileSystemServer(sqlite3Options: final options):
         final worker = await VfsWorker.create(options);
-        self.postMessage(true);
+        self.postMessage(true.toJS);
         await worker.start();
       case DeleteDatabase(database: (final storage, final name)):
         try {

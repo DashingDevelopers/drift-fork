@@ -4,8 +4,14 @@ import 'package:uuid/uuid.dart';
 
 part 'todos.g.dart';
 
+extension type RowId._(int id) {
+  const RowId(this.id);
+}
+
 mixin AutoIncrement on Table {
-  IntColumn get id => integer().autoIncrement()();
+  IntColumn get id => integer()
+      .autoIncrement()
+      .map(TypeConverter.extensionType<RowId, int>())();
 }
 
 @DataClassName('TodoEntry')
@@ -17,7 +23,7 @@ class TodosTable extends Table with AutoIncrement {
   TextColumn get content => text()();
   @JsonKey('target_date')
   DateTimeColumn get targetDate => dateTime().nullable().unique()();
-
+  @ReferenceName("todos")
   IntColumn get category => integer().references(Categories, #id).nullable()();
 
   TextColumn get status => textEnum<TodoStatus>().nullable()();
@@ -79,6 +85,48 @@ class TableWithoutPK extends Table {
 
   TextColumn get custom =>
       text().map(const CustomConverter()).clientDefault(_uuid.v4)();
+}
+
+class TableWithEveryColumnType extends Table with AutoIncrement {
+  BoolColumn get aBool => boolean().nullable()();
+  DateTimeColumn get aDateTime => dateTime().nullable()();
+  TextColumn get aText => text().nullable()();
+  IntColumn get anInt => integer().nullable()();
+  Int64Column get anInt64 => int64().nullable()();
+  RealColumn get aReal => real().nullable()();
+  BlobColumn get aBlob => blob().nullable()();
+  IntColumn get anIntEnum => intEnum<TodoStatus>().nullable()();
+  TextColumn get aTextWithConverter => text()
+      .named('insert')
+      .map(const CustomJsonConverter())
+      .nullable()
+      .nullable()();
+}
+
+class Department extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text().nullable()();
+}
+
+class Product extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text().nullable()();
+  IntColumn get department =>
+      integer().references(Department, #id).nullable()();
+}
+
+class Listing extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  @ReferenceName('listings')
+  IntColumn get product => integer().references(Product, #id).nullable()();
+  @ReferenceName('listings')
+  IntColumn get store => integer().references(Store, #id).nullable()();
+  RealColumn get price => real().nullable()();
+}
+
+class Store extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text().nullable()();
 }
 
 class CustomRowClass {
@@ -180,6 +228,59 @@ abstract class TodoWithCategoryView extends View {
       .join([innerJoin(categories, categories.id.equalsExp(todos.category))]);
 }
 
+class WithCustomType extends Table {
+  Column<UuidValue> get id => customType(uuidType)();
+}
+
+class NativeUuidType implements CustomSqlType<UuidValue> {
+  const NativeUuidType();
+
+  @override
+  String mapToSqlLiteral(UuidValue dartValue) {
+    return "'$dartValue'";
+  }
+
+  @override
+  Object mapToSqlParameter(UuidValue dartValue) {
+    return dartValue;
+  }
+
+  @override
+  UuidValue read(Object fromSql) {
+    return fromSql as UuidValue;
+  }
+
+  @override
+  String sqlTypeName(GenerationContext context) => 'uuid';
+}
+
+class _UuidAsTextType implements CustomSqlType<UuidValue> {
+  const _UuidAsTextType();
+
+  @override
+  String mapToSqlLiteral(UuidValue dartValue) {
+    return "'$dartValue'";
+  }
+
+  @override
+  Object mapToSqlParameter(UuidValue dartValue) {
+    return dartValue.toString();
+  }
+
+  @override
+  UuidValue read(Object fromSql) {
+    return UuidValue.fromString(fromSql as String);
+  }
+
+  @override
+  String sqlTypeName(GenerationContext context) => 'text';
+}
+
+const uuidType = DialectAwareSqlType<UuidValue>.via(
+  fallback: _UuidAsTextType(),
+  overrides: {SqlDialect.postgres: NativeUuidType()},
+);
+
 @DriftDatabase(
   tables: [
     TodosTable,
@@ -188,6 +289,12 @@ abstract class TodoWithCategoryView extends View {
     SharedTodos,
     TableWithoutPK,
     PureDefaults,
+    WithCustomType,
+    TableWithEveryColumnType,
+    Department,
+    Product,
+    Listing,
+    Store,
   ],
   views: [
     CategoryTodoCountView,
@@ -230,7 +337,7 @@ class TodoDb extends _$TodoDb {
   },
 )
 class SomeDao extends DatabaseAccessor<TodoDb> with _$SomeDaoMixin {
-  SomeDao(TodoDb db) : super(db);
+  SomeDao(super.db);
 }
 
 QueryExecutor get _nullExecutor =>

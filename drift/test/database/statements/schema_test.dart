@@ -109,6 +109,26 @@ void main() {
           []));
     });
 
+    group('creates tables with custom types', () {
+      test('sqlite3', () async {
+        await db.createMigrator().createTable(db.withCustomType);
+
+        verify(mockExecutor.runCustom(
+            'CREATE TABLE IF NOT EXISTS "with_custom_type" ("id" text NOT NULL);',
+            []));
+      });
+
+      test('postgres', () async {
+        when(mockExecutor.dialect).thenReturn(SqlDialect.postgres);
+        await db.createMigrator().createTable(db.withCustomType);
+        verify(mockExecutor.runCustom(
+            'CREATE TABLE IF NOT EXISTS "with_custom_type" ("id" uuid NOT NULL);',
+            []));
+      });
+    });
+
+    test('creates tables with custom types', () async {});
+
     test('creates views through create()', () async {
       await db.createMigrator().create(db.categoryTodoCountView);
 
@@ -313,7 +333,7 @@ final class _FakeSchemaVersion extends VersionedSchema {
 }
 
 class _DefaultDb extends GeneratedDatabase {
-  _DefaultDb(QueryExecutor executor) : super(executor);
+  _DefaultDb(super.executor);
 
   @override
   List<TableInfo<Table, DataClass>> get allTables => [];

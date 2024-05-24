@@ -30,10 +30,7 @@ class SimpleSelectStatement<T extends HasResultSet, D> extends Query<T, D>
 
   /// Used internally by drift, users will want to call
   /// [DatabaseConnectionUser.select] instead.
-  SimpleSelectStatement(
-      DatabaseConnectionUser database, ResultSetImplementation<T, D> table,
-      {this.distinct = false})
-      : super(database, table);
+  SimpleSelectStatement(super.database, super.table, {this.distinct = false});
 
   /// The tables this select statement reads from.
   @visibleForOverriding
@@ -80,7 +77,7 @@ class SimpleSelectStatement<T extends HasResultSet, D> extends Query<T, D>
   }
 
   Future<List<Map<String, Object?>>> _getRaw(GenerationContext ctx) {
-    return database.doWhenOpened((e) {
+    return database.withCurrentExecutor((e) {
       return e.runSelect(ctx.sql, ctx.boundVariables);
     });
   }
@@ -90,8 +87,8 @@ class SimpleSelectStatement<T extends HasResultSet, D> extends Query<T, D>
     return table.map(row);
   }
 
-  Future<List<D>> _mapResponse(List<Map<String, Object?>> rows) {
-    return rows.mapAsyncAndAwait(_mapRow);
+  FutureOr<List<D>> _mapResponse(List<Map<String, Object?>> rows) {
+    return rows.mapAsyncAndAwait(table.map);
   }
 
   /// Creates a select statement that operates on more than one table by
@@ -213,5 +210,15 @@ class TypedResult {
     throw ArgumentError(
         'Invalid call to read(): $expr. This result set does not have a column '
         'for that expression.');
+  }
+
+  /// Reads a column that has a type converter applied to it from the row.
+  ///
+  /// This calls [read] internally, which reads the column but without applying
+  /// a type converter.
+  D? readWithConverter<D, S extends Object>(
+      GeneratedColumnWithTypeConverter<D, S> column) {
+    return NullAwareTypeConverter.wrapFromSql(
+        column.converter, read<S>(column));
   }
 }

@@ -59,15 +59,19 @@ abstract class GeneratedDatabase extends DatabaseConnectionUser
   final Type _$dontSendThisOverIsolates = Null;
 
   /// Used by generated code
-  GeneratedDatabase(QueryExecutor executor, {StreamQueryStore? streamStore})
-      : super(executor, streamQueries: streamStore) {
-    assert(_handleInstantiated());
+  GeneratedDatabase(super.executor, {StreamQueryStore? streamStore})
+      : super(streamQueries: streamStore) {
+    _whenConstructed();
   }
 
   /// Used by generated code to connect to a database that is already open.
-  GeneratedDatabase.connect(DatabaseConnection connection)
-      : super.fromConnection(connection) {
+  GeneratedDatabase.connect(super.connection) : super.fromConnection() {
+    _whenConstructed();
+  }
+
+  void _whenConstructed() {
     assert(_handleInstantiated());
+    devtools.handleCreated(this);
   }
 
   bool _handleInstantiated() {
@@ -138,6 +142,7 @@ abstract class GeneratedDatabase extends DatabaseConnectionUser
   @override
   Future<void> close() async {
     await super.close();
+    devtools.handleClosed(this);
 
     assert(() {
       if (_openedDbCount[runtimeType] != null) {

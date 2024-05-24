@@ -18,15 +18,24 @@ TestDatabase? openedDatabase;
 StreamQueue<void>? tableUpdates;
 
 InitializationMode initializationMode = InitializationMode.none;
+int schemaVersion = 1;
 
 void main() {
   _addCallbackForWebDriver('detectImplementations', _detectImplementations);
   _addCallbackForWebDriver('open', _open);
+  _addCallbackForWebDriver('close', (arg) async {
+    await openedDatabase?.close();
+  });
   _addCallbackForWebDriver('insert', _insert);
   _addCallbackForWebDriver('get_rows', _getRows);
+  _addCallbackForWebDriver('has_table', _hasTables);
   _addCallbackForWebDriver('wait_for_update', _waitForUpdate);
   _addCallbackForWebDriver('enable_initialization', (arg) async {
     initializationMode = InitializationMode.values.byName(arg!);
+    return true;
+  });
+  _addCallbackForWebDriver('set_schema_version', (arg) async {
+    schemaVersion = int.parse(arg!);
     return true;
   });
   _addCallbackForWebDriver('delete_database', (arg) async {
@@ -82,7 +91,7 @@ Future<Uint8List?> _initializeDatabase() async {
 
       // Let's first open a custom WasmDatabase, the way it would have been
       // done before WasmDatabase.open.
-      final sqlite3 = await WasmSqlite3.loadFromUrl(Uri.parse('sqlite3.wasm'));
+      final sqlite3 = await WasmSqlite3.loadFromUrl(sqlite3WasmUri);
       final fs = await IndexedDbFileSystem.open(dbName: dbName);
       sqlite3.registerVirtualFileSystem(fs, makeDefault: true);
 
@@ -102,6 +111,7 @@ Future<Uint8List?> _initializeDatabase() async {
 
       return blob;
     case InitializationMode.none:
+    case InitializationMode.noneAndDisableMigrations:
       return null;
   }
 }
@@ -141,18 +151,33 @@ Future<void> _open(String? implementationName) async {
       sqlite3Uri: sqlite3WasmUri,
       driftWorkerUri: driftWorkerUri,
       initializeDatabase: _initializeDatabase,
+      enableMigrations:
+          initializationMode != InitializationMode.noneAndDisableMigrations,
+      localSetup: (db) {
+        // The worker has a similar setup call that will make database_host
+        // return `worker` instead.
+        db.createFunction(
+          functionName: 'database_host',
+          function: (args) => 'document',
+          argumentCount: const AllowedArgumentCount(0),
+        );
+      },
     );
 
     connection = result.resolvedExecutor;
   }
 
-  final db = openedDatabase = TestDatabase(connection);
+  final db =
+      openedDatabase = TestDatabase(connection)..schemaVersion = schemaVersion;
 
   // Make sure it works!
-  await db.customSelect('SELECT 1').get();
+  await db.customSelect('SELECT database_host()').get();
 
-  tableUpdates = StreamQueue(db.testTable.all().watch());
-  await tableUpdates!.next;
+  if (initializationMode != InitializationMode.noneAndDisableMigrations) {
+    // Can't listen without migrations, the table doesn't exist.
+    tableUpdates = StreamQueue(db.testTable.all().watch());
+    await tableUpdates!.next;
+  }
 }
 
 Future<void> _waitForUpdate(String? _) async {
@@ -172,4 +197,10 @@ Future<int> _getRows(String? _) async {
 
   final query = db.selectOnly(db.testTable)..addColumns([count]);
   return await query.map((row) => row.read(count)!).getSingle();
+}
+
+Future<bool> _hasTables(String? _) async {
+  final db = openedDatabase!;
+  final rows = await db.customSelect('SELECT * FROM sqlite_schema').get();
+  return rows.isNotEmpty;
 }

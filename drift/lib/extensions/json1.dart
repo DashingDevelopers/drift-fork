@@ -12,6 +12,22 @@ import '../drift.dart';
 
 /// Defines extensions on string expressions to support the json1 api from Dart.
 extension JsonExtensions on Expression<String> {
+  /// Reads `this` expression as a JSON structure and outputs the JSON in a
+  /// minified format.
+  ///
+  /// For details, see https://www.sqlite.org/json1.html#jmini.
+  Expression<String> json() {
+    return FunctionCallExpression('json', [this]);
+  }
+
+  /// Reads `this` expression as a JSON structure and outputs the JSON in a
+  /// binary format internal to sqlite3.
+  ///
+  /// For details, see https://www.sqlite.org/json1.html#jminib.
+  Expression<Uint8List> jsonb() {
+    return FunctionCallExpression('jsonb', [this]);
+  }
+
   /// Assuming that this string is a json array, returns the length of this json
   /// array.
   ///
@@ -82,6 +98,192 @@ extension JsonExtensions on Expression<String> {
       this,
       if (path != null) Variable(path),
     ]);
+  }
+}
+
+/// Returns a JSON array containing the result of evaluating [value] in each row
+/// of the current group.
+///
+/// As an example, consider two tables with a one-to-many relationship between
+/// them:
+///
+/// ```dart
+/// class Emails extends Table {
+///   TextColumn get subject => text()();
+///   TextColumn get body => text()();
+///   IntColumn get folder => integer().references(Folders, #id)();
+/// }
+///
+/// class Folders extends Table {
+///   IntColumn get id => integer()();
+///   TextColumn get title => text()();
+/// }
+/// ```
+///
+/// With this schema, suppose we want to find the subject lines of every email
+/// in every folder. A join gets us all the information:
+///
+/// ```dart
+/// final query = select(folders)
+///   .join([innerJoin(emails, emails.folder.equalsExp(folders.id))]);
+/// ```
+///
+/// However, running this query would duplicate rows for `Folders` - if that
+/// table had more columns, that might not be what you want. With
+/// [jsonGroupArray], it's possible to join all subjects into a single row:
+///
+/// ```dart
+/// final subjects = jsonGroupObject(emails.subject);
+/// query
+///   ..groupBy([folders.id])
+///   ..addColumns([subjects]);
+/// ```
+///
+/// Running this query would return one row for each folder, where
+/// `row.read(subjects)` is a textual JSON representation of the subjects for
+/// all emails in that folder.
+/// This string could be turned back into a list with
+/// `(json.decode(row.read(subjects)!) as List).cast<String>()`.
+Expression<String> jsonGroupArray(
+  Expression value, {
+  OrderBy? orderBy,
+  Expression<bool>? filter,
+}) {
+  return AggregateFunctionExpression('json_group_array', [value],
+      orderBy: orderBy, filter: filter);
+}
+
+/// Returns a binary representation of a JSON array containing the result of
+/// evaluating [value] in each row of the current group.
+///
+/// See [jsonGroupArray], the variant of this function returning a textual
+/// description, for more details and an example.
+Expression<Uint8List> jsonbGroupArray(
+  Expression value, {
+  OrderBy? orderBy,
+  Expression<bool>? filter,
+}) {
+  return AggregateFunctionExpression('jsonb_group_array', [value],
+      orderBy: orderBy, filter: filter);
+}
+
+List<Expression> _groupObjectArgs(Map<Expression<String>, Expression> values) {
+  final expressions = <Expression>[];
+  for (final MapEntry(:key, :value) in values.entries) {
+    expressions.add(key);
+    expressions.add(value);
+  }
+  return expressions;
+}
+
+/// Returns a JSON object consisting of the keys and values from the provided
+/// [values] map.
+///
+/// As an example, consider this example schema to store emails:
+///
+/// ```dart
+/// class Emails extends Table {
+///   TextColumn get subject => text()();
+///   TextColumn get body => text()();
+///   IntColumn get folder => integer().references(Folders, #id)();
+/// }
+///
+/// class Folders extends Table {
+///   IntColumn get id => integer()();
+///   TextColumn get title => text()();
+/// }
+/// ```
+///
+/// Now, say you wanted to write a query finding the subject and body of every
+/// email in every folder. The resulting value might look like this:
+/// ```json
+///  {
+///    "Group array example": "Hey there, aren't you aware that email is dead?",
+///    "Re: Group array example": "It's just an example okay?"
+///  }
+/// ```
+///
+/// Again, the starting point is formed by a query joining the tables:
+///
+/// ```dart
+/// final query = select(folders)
+///   .join([innerJoin(emails, emails.folder.equalsExp(folders.id))]);
+/// ```
+///
+/// Now, a group by clause and [jsonGroupObject] can be used to collapse all
+/// joined rows from the `emails` table into a single value:
+///
+/// ```dart
+/// final subjectAndBody = jsonGroupObject({emails.subject: emails.body});
+/// query
+///   ..groupBy([folders.id])
+///   ..addColumns([subjectAndBody]);
+/// ```
+///
+/// Running this query would return one row for each folder, where
+/// `row.read(subjectAndBody)` is a textual JSON representation of a
+/// `Map<String, String>`.
+Expression<String> jsonGroupObject(Map<Expression<String>, Expression> values) {
+  return FunctionCallExpression('json_group_object', _groupObjectArgs(values));
+}
+
+/// Returns a binary representation of a JSON object consisting of the provided
+/// keys and values in the current group.
+///
+/// See [jsonGroupObject], the variant of this function returning a textual
+/// description, for more details and an example.
+Expression<Uint8List> jsonbGroupObject(
+    Map<Expression<String>, Expression> values) {
+  return FunctionCallExpression('jsonb_group_object', _groupObjectArgs(values));
+}
+
+/// Defines extensions for the binary `JSONB` format introduced in sqlite3
+/// version 3.45.
+///
+/// For details, see https://www.sqlite.org/json1.html#jsonb
+extension JsonbExtensions on Expression<Uint8List> {
+  /// Reads this binary JSONB structure and emits its textual representation as
+  /// minified JSON.
+  ///
+  /// For details, see https://www.sqlite.org/json1.html#jmini.
+  Expression<String> json() {
+    return dartCast<String>().json();
+  }
+
+  /// Assuming that `this` is an expression evaluating to a binary JSONB array,
+  /// returns the length of the array.
+  ///
+  /// See [JsonExtensions.jsonArrayLength] for more details and
+  /// https://www.sqlite.org/json1.html#jsonb for details on jsonb.
+  Expression<int> jsonArrayLength([String? path]) {
+    // the function accepts both formats, and this way we avoid some duplicate
+    // code.
+    return dartCast<String>().jsonArrayLength(path);
+  }
+
+  /// Assuming that `this` is an expression evaluating to a binary JSONB object
+  /// or array, extracts the part of the structure identified by [path].
+  ///
+  /// For more details, see [JsonExtensions.jsonExtract] or
+  /// https://www.sqlite.org/json1.html#jex.
+  Expression<T> jsonExtract<T extends Object>(String path) {
+    return dartCast<String>().jsonExtract(path);
+  }
+
+  /// Calls the `json_each` table-valued function on `this` binary JSON buffer,
+  /// optionally using [path] as the root path.
+  ///
+  /// See [JsonTableFunction] and [JsonExtensions.jsonEach] for more details.
+  JsonTableFunction jsonEach(DatabaseConnectionUser database, [String? path]) {
+    return dartCast<String>().jsonEach(database, path);
+  }
+
+  /// Calls the `json_tree` table-valued function on `this` binary JSON buffer,
+  /// optionally using [path] as the root path.
+  ///
+  /// See [JsonTableFunction] and [JsonExtensions.jsonTree] for more details.
+  JsonTableFunction jsonTree(DatabaseConnectionUser database, [String? path]) {
+    return dartCast<String>().jsonTree(database, path);
   }
 }
 

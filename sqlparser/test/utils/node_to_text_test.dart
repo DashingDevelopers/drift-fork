@@ -82,7 +82,7 @@ END;
 
       test('after update of when', () {
         testFormat('''
-CREATE TRIGGER IF NOT EXISTS my_trigger AFTER UPDATE OF c1, c2 ON t1 
+CREATE TRIGGER IF NOT EXISTS my_trigger AFTER UPDATE OF c1, c2 ON t1
   WHEN foo = bar
 BEGIN
   SELECT * FROM t2;
@@ -106,6 +106,14 @@ CREATE VIEW my_view (foo, bar) AS SELECT * FROM t1;
 
       testFormat('''
 CREATE VIEW my_view AS SELECT * FROM t1;
+      ''');
+
+      testFormat('''
+CREATE VIEW my_view AS Foo (foo, bar) AS SELECT * FROM t1;
+      ''');
+
+      testFormat('''
+CREATE VIEW my_view WITH Foo.constr (foo, bar) AS SELECT * FROM t1;
       ''');
     });
 
@@ -164,6 +172,14 @@ CREATE TABLE foo (bar INTEGER NOT NULL PRIMARY KEY) With FooData.myConstructor;
 
       test('virtual', () {
         testFormat('CREATE VIRTUAL TABLE foo USING bar(a, b, c);');
+      });
+
+      test('not null', () {
+        testFormat('CREATE TABLE foo (bar TEXT NOT NULL);');
+      });
+
+      test('null constraint', () {
+        testFormat('CREATE TABLE foo (bar TEXT NULL);');
       });
     });
 
@@ -309,6 +325,15 @@ CREATE UNIQUE INDEX my_idx ON t1 (c1, c2, c3) WHERE c1 < c3;
         ''');
       });
 
+      test('aggregate with order by', () {
+        testFormat('''
+          SELECT
+            string_agg(foo, ',' ORDER BY foo DESC, bar),
+            string_agg(foo, ',' ORDER BY foo DESC) FILTER (WHERE foo > 10)
+          FROM bar
+        ''');
+      });
+
       group('joins', () {
         for (final kind in ['LEFT', 'RIGHT', 'FULL']) {
           test(kind, () {
@@ -398,6 +423,11 @@ CREATE UNIQUE INDEX my_idx ON t1 (c1, c2, c3) WHERE c1 < c3;
             'ON CONFLICT DO UPDATE SET a = b, c = d WHERE d < a;');
       });
 
+      test('upsert - update with column-name-list', () {
+        testFormat('INSERT INTO foo VALUES (1, 2, 3) '
+            'ON CONFLICT DO UPDATE SET (a, c) = (b, d) WHERE d < a;');
+      });
+
       test('upsert - multiple clauses', () {
         testFormat('INSERT INTO foo VALUES (1, 2, 3) '
             'ON CONFLICT DO NOTHING '
@@ -408,6 +438,14 @@ CREATE UNIQUE INDEX my_idx ON t1 (c1, c2, c3) WHERE c1 < c3;
     group('update', () {
       test('simple', () {
         testFormat('UPDATE foo SET bar = baz WHERE 1;');
+      });
+
+      test('with column-name-list', () {
+        testFormat('UPDATE foo SET (bar, baz) = (baz, bar) WHERE 1;');
+      });
+
+      test('with column-name-list and subquery', () {
+        testFormat('UPDATE foo SET (bar, baz) = (SELECT 1,2) WHERE 1;');
       });
 
       test('with returning', () {
@@ -447,6 +485,9 @@ CREATE UNIQUE INDEX my_idx ON t1 (c1, c2, c3) WHERE c1 < c3;
     test('in', () {
       testFormat('SELECT x IN (SELECT * FROM foo);');
       testFormat('SELECT x NOT IN (SELECT * FROM foo);');
+      testFormat('SELECT x IN foo');
+      testFormat('SELECT x IN json_each(bar)');
+      testFormat('SELECT x IN :array');
     });
 
     test('boolean literals', () {
@@ -529,6 +570,11 @@ CREATE UNIQUE INDEX my_idx ON t1 (c1, c2, c3) WHERE c1 < c3;
     test('json', () {
       testFormat('SELECT a -> b');
       testFormat('SELECT a ->> b');
+    });
+
+    test('blob literal', () {
+      testFormat(
+          "select typeof(X'0100000300000000000000000000803F000000000000003F0000803F');");
     });
   });
 

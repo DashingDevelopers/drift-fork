@@ -9,6 +9,7 @@ import 'package:recase/recase.dart';
 import '../../results/results.dart';
 import '../intermediate_state.dart';
 import '../resolver.dart';
+import '../shared/data_class.dart';
 import 'helper.dart';
 
 class DartViewResolver extends LocalElementResolver<DiscoveredDartView> {
@@ -26,15 +27,13 @@ class DartViewResolver extends LocalElementResolver<DiscoveredDartView> {
       discovered.ownId,
       DriftDeclaration.dartElement(discovered.dartElement),
       columns: columns,
-      nameOfRowClass: dataClassInfo.enforcedName,
+      nameOfRowClass: dataClassInfo.enforcedName ??
+          dataClassNameForClassName(discovered.dartElement.name),
       existingRowClass: dataClassInfo.existingClass,
       customParentClass: dataClassInfo.extending,
       entityInfoName: '\$${discovered.dartElement.name}View',
-      source: DartViewSource(
-        structure.dartQuerySource,
-        structure.primarySource,
-        staticReferences,
-      ),
+      source: DartViewSource(structure.dartQuerySource, structure.primarySource,
+          staticReferences, structure.staticSource),
       references: [
         for (final reference in staticReferences) reference.table,
       ],
@@ -54,7 +53,7 @@ class DartViewResolver extends LocalElementResolver<DiscoveredDartView> {
   Future<TableReferenceInDartView?> _getStaticReference(
       FieldElement field) async {
     final type = field.type;
-    final knownTypes = await resolver.driver.loadKnownTypes();
+    final knownTypes = await resolver.driver.knownTypes;
     final typeSystem = field.library.typeSystem;
 
     if (type is! InterfaceType ||
@@ -178,7 +177,8 @@ class DartViewResolver extends LocalElementResolver<DiscoveredDartView> {
     final from = target.argumentList.arguments[0].toSource();
     final resolvedFrom =
         references.firstWhereOrNull((element) => element.name == from);
-    if (resolvedFrom == null) {
+    if (resolvedFrom == null &&
+        !resolver.driver.options.assumeCorrectReference) {
       reportError(
         DriftAnalysisError.inDartAst(
           as,
@@ -188,11 +188,18 @@ class DartViewResolver extends LocalElementResolver<DiscoveredDartView> {
         ),
       );
     }
+    AnnotatedDartCode query;
+    if (resolvedFrom == null &&
+        resolver.driver.options.assumeCorrectReference) {
+      query = AnnotatedDartCode.build((builder) => builder.addText(
+          body.expression.toSource().replaceAll(target!.toSource(), '')));
+    } else {
+      query = AnnotatedDartCode.build(
+          (builder) => builder.addAstNode(body.expression, exclude: {target!}));
+    }
 
-    final query = AnnotatedDartCode.build(
-        (builder) => builder.addAstNode(body.expression, exclude: {target!}));
     return _ParsedDartViewSelect(
-        resolvedFrom, innerJoins, outerJoins, columnExpressions, query);
+        resolvedFrom, innerJoins, outerJoins, columnExpressions, query, from);
   }
 
   Future<List<DriftColumn>> _parseColumns(
@@ -275,12 +282,16 @@ class DartViewResolver extends LocalElementResolver<DiscoveredDartView> {
 
         columns.add(DriftColumn(
           declaration: DriftDeclaration.dartElement(getter),
-          sqlType: sqlType,
+          sqlType: ColumnType.drift(sqlType),
           nameInDart: getter.name,
           nameInSql: ReCase(getter.name).snakeCase,
           nullable: true,
           constraints: [
-            ColumnGeneratedAs(AnnotatedDartCode.ast(expression), false)
+            resolver.driver.options.assumeCorrectReference
+                ? ColumnGeneratedAs(AnnotatedDartCode.build((builder) {
+                    builder.addText(expression.toSource());
+                  }), false)
+                : ColumnGeneratedAs(AnnotatedDartCode.ast(expression), false),
           ],
         ));
       }
@@ -310,8 +321,10 @@ class _ParsedDartViewSelect {
   final List<Expression> selectedColumns;
   final AnnotatedDartCode dartQuerySource;
 
+  final String? staticSource;
   _ParsedDartViewSelect(this.primarySource, this.innerJoins, this.outerJoins,
-      this.selectedColumns, this.dartQuerySource);
+      this.selectedColumns, this.dartQuerySource,
+      [this.staticSource]);
 
   bool referenceIsNullable(TableReferenceInDartView ref) {
     return ref != primarySource && !innerJoins.contains(ref);

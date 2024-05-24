@@ -3,7 +3,6 @@ import 'package:analyzer/dart/element/nullability_suffix.dart';
 import 'package:collection/collection.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
-import 'package:drift/drift.dart';
 import 'package:sqlparser/sqlparser.dart';
 import 'package:sqlparser/utils/find_referenced_tables.dart';
 
@@ -22,8 +21,33 @@ abstract class DriftElementResolver<T extends DiscoveredElement>
   DriftElementResolver(
       super.file, super.discovered, super.resolver, super.state);
 
+  Future<CustomColumnType?> resolveCustomColumnType(
+      InlineDartToken type) async {
+    dart.Expression expression;
+    try {
+      expression = await resolver.driver.backend.resolveExpression(
+        file.ownUri,
+        type.dartCode,
+        file.discovery!.importDependencies
+            .map((e) => e.uri.toString())
+            .where((e) => e.endsWith('.dart')),
+      );
+    } on CannotReadExpressionException catch (e) {
+      reportError(DriftAnalysisError.inDriftFile(type, e.msg));
+      return null;
+    }
+
+    final knownTypes = await resolver.driver.knownTypes;
+    return readCustomType(
+      knownTypes.helperLibrary,
+      expression,
+      knownTypes,
+      (msg) => reportError(DriftAnalysisError.inDriftFile(type, msg)),
+    );
+  }
+
   Future<AppliedTypeConverter?> typeConverterFromMappedBy(
-      DriftSqlType sqlType, bool nullable, MappedBy mapper) async {
+      ColumnType sqlType, bool nullable, MappedBy mapper) async {
     final code = mapper.mapper.dartCode;
 
     dart.Expression expression;
@@ -40,7 +64,8 @@ abstract class DriftElementResolver<T extends DiscoveredElement>
       return null;
     }
 
-    final knownTypes = await resolver.driver.loadKnownTypes();
+    final knownTypes = await resolver.driver.knownTypes;
+
     return readTypeConverter(
       knownTypes.helperLibrary,
       expression,
@@ -112,6 +137,8 @@ abstract class DriftElementResolver<T extends DiscoveredElement>
 
     final dataClassName = source.overriddenDataClassName;
     final element = await _findInDart(dataClassName);
+    final knownTypes = await resolver.driver.knownTypes;
+
     FoundDartClass? foundDartClass;
 
     if (element is InterfaceElement) {
@@ -129,7 +156,7 @@ abstract class DriftElementResolver<T extends DiscoveredElement>
           innerType,
           false,
           this,
-          await resolver.driver.loadKnownTypes(),
+          knownTypes,
         );
       }
     }
@@ -142,14 +169,15 @@ abstract class DriftElementResolver<T extends DiscoveredElement>
       ));
       return null;
     } else {
-      final knownTypes = await resolver.driver.loadKnownTypes();
       return validateExistingClass(columns, foundDartClass,
           source.constructorName ?? '', false, this, knownTypes);
     }
   }
 
-  SqlEngine newEngineWithTables(Iterable<DriftElement> references) {
-    return resolver.driver.typeMapping.newEngineWithTables(references);
+  Future<SqlEngine> newEngineWithTables(
+      Iterable<DriftElement> references) async {
+    final mapping = await resolver.driver.typeMapping;
+    return mapping.newEngineWithTables(references);
   }
 
   DriftElement? findInResolved(List<DriftElement> references, String name) {

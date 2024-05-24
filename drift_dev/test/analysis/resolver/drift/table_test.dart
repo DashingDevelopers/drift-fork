@@ -1,13 +1,14 @@
 import 'package:drift/drift.dart' show DriftSqlType;
 import 'package:drift_dev/src/analysis/results/column.dart';
 import 'package:drift_dev/src/analysis/results/table.dart';
+import 'package:drift_dev/src/analysis/results/types.dart';
 import 'package:test/test.dart';
 
 import '../../test_utils.dart';
 
 void main() {
   test('reports foreign keys in drift model', () async {
-    final backend = TestBackend.inTest({
+    final backend = await TestBackend.inTest({
       'a|lib/a.drift': '''
 CREATE TABLE a (
   foo INTEGER PRIMARY KEY,
@@ -33,12 +34,12 @@ CREATE TABLE b (
     final b = results[1].result! as DriftTable;
     final bBar = b.columns[0];
 
-    expect(aFoo.sqlType, DriftSqlType.int);
+    expect(aFoo.sqlType.builtin, DriftSqlType.int);
     expect(aFoo.nullable, isFalse);
     expect(aFoo.constraints, [isA<PrimaryKeyColumn>()]);
     expect(aFoo.customConstraints, 'PRIMARY KEY');
 
-    expect(aBar.sqlType, DriftSqlType.int);
+    expect(aBar.sqlType.builtin, DriftSqlType.int);
     expect(aBar.nullable, isTrue);
     expect(aBar.constraints, [
       isA<ForeignKeyReference>()
@@ -48,14 +49,14 @@ CREATE TABLE b (
     ]);
     expect(aBar.customConstraints, 'REFERENCES b(bar)');
 
-    expect(bBar.sqlType, DriftSqlType.int);
+    expect(bBar.sqlType.builtin, DriftSqlType.int);
     expect(bBar.nullable, isFalse);
     expect(bBar.constraints, isEmpty);
     expect(bBar.customConstraints, 'NOT NULL');
   });
 
   test('recognizes aliases to rowid', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'foo|lib/a.drift': '''
       CREATE TABLE users (
         id INTEGER PRIMARY KEY,
@@ -83,7 +84,7 @@ CREATE TABLE b (
   });
 
   test('parses enum columns', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'a|lib/a.drift': '''
          import 'enum.dart';
 
@@ -111,7 +112,7 @@ CREATE TABLE b (
     final indexColumn =
         table.columns.singleWhere((c) => c.nameInSql == 'fruitIndex');
 
-    expect(indexColumn.sqlType, DriftSqlType.int);
+    expect(indexColumn.sqlType.builtin, DriftSqlType.int);
     expect(
       indexColumn.typeConverter,
       isA<AppliedTypeConverter>()
@@ -120,13 +121,12 @@ CREATE TABLE b (
             'expression',
             contains('EnumIndexConverter<Fruits>'),
           )
-          .having((e) => e.dartType.getDisplayString(withNullability: true),
-              'dartType', 'Fruits'),
+          .having((e) => e.dartType.getDisplayString(), 'dartType', 'Fruits'),
     );
 
     final withGenericIndexColumn = table.columns
         .singleWhere((c) => c.nameInSql == 'fruitWithGenericIndex');
-    expect(withGenericIndexColumn.sqlType, DriftSqlType.int);
+    expect(withGenericIndexColumn.sqlType.builtin, DriftSqlType.int);
     expect(
       withGenericIndexColumn.typeConverter,
       isA<AppliedTypeConverter>()
@@ -142,7 +142,7 @@ CREATE TABLE b (
     final nameColumn =
         table.columns.singleWhere((c) => c.nameInSql == 'fruitName');
 
-    expect(nameColumn.sqlType, DriftSqlType.string);
+    expect(nameColumn.sqlType.builtin, DriftSqlType.string);
     expect(
       nameColumn.typeConverter,
       isA<AppliedTypeConverter>()
@@ -151,8 +151,7 @@ CREATE TABLE b (
             'expression',
             contains('EnumNameConverter<Fruits>'),
           )
-          .having((e) => e.dartType.getDisplayString(withNullability: true),
-              'dartType', 'Fruits'),
+          .having((e) => e.dartType.getDisplayString(), 'dartType', 'Fruits'),
     );
 
     expect(
@@ -167,7 +166,7 @@ CREATE TABLE b (
   });
 
   test('does not allow converters for enum columns', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'a|lib/a.drift': '''
          import 'enum.dart';
 
@@ -199,7 +198,7 @@ CREATE TABLE b (
   });
 
   test('does not allow enum types for non-enums', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'a|lib/a.drift': '''
          import 'enum.dart';
 
@@ -222,7 +221,7 @@ CREATE TABLE b (
   });
 
   test('supports JSON KEY annotation', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'a|lib/a.drift': '''
 CREATE TABLE waybills (
     parent    INT      JSON KEY parentDoc        NULL,
@@ -243,7 +242,7 @@ CREATE TABLE waybills (
   });
 
   test('recognizes documentation comments', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'a|lib/a.drift': '''
 CREATE TABLE IF NOT EXISTS currencies (
   -- The name of this currency
@@ -262,5 +261,53 @@ CREATE TABLE IF NOT EXISTS currencies (
       isA<DriftColumn>().having((e) => e.documentationComment,
           'documentationComment', '/// The name of this currency'),
     );
+  });
+
+  test('can use custom types', () async {
+    final state = await TestBackend.inTest({
+      'a|lib/a.drift': '''
+import 'b.dart';
+
+CREATE TABLE foo (
+  bar `MyType()` NOT NULL
+);
+''',
+      'a|lib/b.dart': '''
+import 'package:drift/drift.dart';
+
+class MyType implements CustomSqlType<String> {}
+      ''',
+    });
+
+    final file = await state.analyze('package:a/a.drift');
+    state.expectNoErrors();
+
+    final table = file.analyzedElements.single as DriftTable;
+    final column = table.columns.single;
+
+    switch (column.sqlType) {
+      case ColumnDriftType():
+        fail('expect custom type');
+      case ColumnCustomType(:final custom):
+        expect(custom.dartType.toString(), 'String');
+        expect(custom.expression.toString(), 'MyType()');
+    }
+  });
+
+  test('recognizes bigint columns', () async {
+    final state = await TestBackend.inTest({
+      'a|lib/a.drift': '''
+CREATE TABLE foo (
+  bar INT64 NOT NULL
+);
+''',
+    });
+
+    final file = await state.analyze('package:a/a.drift');
+    state.expectNoErrors();
+
+    final table = file.analyzedElements.single as DriftTable;
+    final column = table.columns.single;
+    expect(column.sqlType.builtin, DriftSqlType.bigInt);
   });
 }

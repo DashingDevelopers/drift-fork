@@ -157,7 +157,11 @@ class SchemaFromCreateTable {
 
     final upper = typeName.toUpperCase();
     if (upper.contains('INT')) {
-      return const ResolvedType(type: BasicType.int);
+      if (driftExtensions && upper.contains('INT64')) {
+        return const ResolvedType(type: BasicType.int, hints: [IsBigInt()]);
+      } else {
+        return const ResolvedType(type: BasicType.int);
+      }
     }
     if (upper.contains('CHAR') ||
         upper.contains('CLOB') ||
@@ -180,7 +184,7 @@ class SchemaFromCreateTable {
       if (upper.contains('DATE')) {
         return ResolvedType(
           type: driftUseTextForDateTime ? BasicType.text : BasicType.int,
-          hint: const IsDateTime(),
+          hints: const [IsDateTime()],
         );
       }
 

@@ -1,6 +1,10 @@
 name: CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - '**' # we just don't want this to run redundantly on tags
+  pull_request:
 
 env:
   PUB_ENVIRONMENT: bot.github
@@ -18,7 +22,7 @@ jobs:
         working-directory: docs
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/prepare
         with:
           dart_version: ${{ needs.setup.outputs.dart_version }}
@@ -72,20 +76,12 @@ jobs:
         working-directory: drift
     steps:
       # setup
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/prepare
         with:
           dart_version: ${{ needs.setup.outputs.dart_version }}
       - run: melos bootstrap --scope drift
         working-directory: .
-      - name: Get dependencies for plugin
-        run: |
-          echo "dependency_overrides:" >> pubspec_overrides.yaml
-          echo "  drift: {path: ../../}" >> pubspec_overrides.yaml
-          echo "  drift_dev: {path: ../../../drift_dev}" >> pubspec_overrides.yaml
-          echo "  sqlparser: {path: ../../../sqlparser}" >> pubspec_overrides.yaml
-          dart pub get
-        working-directory: drift/tools/analyzer_plugin
       # analysis
       - run: dart format -o none --set-exit-if-changed .
         name: dartfmt
@@ -110,7 +106,7 @@ jobs:
         working-directory: drift_dev
     steps:
     # setup
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - uses: ./.github/actions/prepare
       with:
           dart_version: ${{ needs.setup.outputs.dart_version }}
@@ -131,7 +127,7 @@ jobs:
         working-directory: sqlparser
     steps:
       # setup
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/prepare
         with:
           dart_version: ${{ needs.setup.outputs.dart_version }}
@@ -154,6 +150,7 @@ jobs:
     name: "Integration tests"
     needs: [setup]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres
@@ -174,7 +171,7 @@ jobs:
         ports:
           - 3306:3306
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/prepare
         with:
           dart_version: ${{ needs.setup.outputs.dart_version }}
@@ -184,7 +181,7 @@ jobs:
         working-directory: extras/drift_postgres
         run: |
           dart pub upgrade
-          dart test
+          dart test -j 1
       - name: MariaDB integration tests
         working-directory: extras/drift_mariadb
         continue-on-error: true
@@ -213,7 +210,7 @@ jobs:
     needs: [setup]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/prepare
         with:
           dart_version: ${{ needs.setup.outputs.dart_version }}

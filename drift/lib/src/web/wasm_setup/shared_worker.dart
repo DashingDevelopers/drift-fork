@@ -1,8 +1,8 @@
 // ignore_for_file: public_member_api_docs
 import 'dart:async';
-import 'dart:html';
+import 'dart:js_interop';
 
-import 'package:js/js_util.dart';
+import 'package:web/web.dart';
 
 import '../wasm_setup.dart';
 import 'protocol.dart';
@@ -16,18 +16,21 @@ class SharedDriftWorker {
   /// "shared-dedicated" worker hosting the database.
   Worker? _dedicatedWorker;
 
-  final DriftServerController _servers = DriftServerController();
+  final DriftServerController _servers;
 
-  SharedDriftWorker(this.self);
+  SharedDriftWorker(this.self, WasmDatabaseSetup? setup)
+      : _servers = DriftServerController(setup);
 
   void start() {
-    const event = EventStreamProvider<MessageEvent>('connect');
-    event.forTarget(self).listen(_newConnection);
+    const event = EventStreamProviders.connectEvent;
+    event.forTarget(self).listen((e) => _newConnection(e as MessageEvent));
   }
 
   void _newConnection(MessageEvent event) async {
-    final clientPort = event.ports[0];
-    clientPort.onMessage
+    final clientPort = event.ports.toDart[0];
+    clientPort.start();
+    EventStreamProviders.messageEvent
+        .forTarget(clientPort)
         .listen((event) => _messageFromClient(clientPort, event));
   }
 
@@ -77,6 +80,7 @@ class SharedDriftWorker {
         indexedDbExists: indexedDbExists,
         opfsExists: false,
         existingDatabases: const [],
+        version: ProtocolVersion.current,
       );
     } else {
       final worker = _dedicatedWorker ??= Worker(Uri.base.toString());
@@ -101,6 +105,7 @@ class SharedDriftWorker {
             indexedDbExists: indexedDbExists,
             opfsExists: opfsExists,
             existingDatabases: databases,
+            version: ProtocolVersion.current,
           ));
 
           messageSubscription?.cancel();
@@ -108,9 +113,9 @@ class SharedDriftWorker {
         }
       }
 
-      messageSubscription = worker.onMessage.listen((event) {
-        final data =
-            WasmInitializationMessage.fromJs(getProperty(event, 'data'));
+      messageSubscription =
+          EventStreamProviders.messageEvent.forTarget(worker).listen((event) {
+        final data = WasmInitializationMessage.read(event);
         final compatibilityResult = data as DedicatedWorkerCompatibilityResult;
 
         result(
@@ -121,7 +126,8 @@ class SharedDriftWorker {
         );
       });
 
-      errorSubscription = worker.onError.listen((event) {
+      errorSubscription =
+          EventStreamProviders.errorEvent.forTarget(worker).listen((event) {
         result(false, false, false, const []);
         worker.terminate();
         _dedicatedWorker = null;

@@ -62,6 +62,7 @@ void main() {
           't.content': 'content',
           't.target_date': date.millisecondsSinceEpoch ~/ 1000,
           't.category': 3,
+          't.status': 'workInProgress',
           'c.id': 3,
           'c.desc': 'description',
           'c.description_in_upper_case': 'DESCRIPTION',
@@ -80,17 +81,18 @@ void main() {
     expect(
         row.readTable(todos),
         TodoEntry(
-          id: 5,
+          id: RowId(5),
           title: 'title',
           content: 'content',
           targetDate: date,
           category: 3,
+          status: TodoStatus.workInProgress,
         ));
 
     expect(
       row.readTable(categories),
       const Category(
-        id: 3,
+        id: RowId(3),
         description: 'description',
         priority: CategoryPriority.high,
         descriptionInUpperCase: 'DESCRIPTION',
@@ -100,6 +102,9 @@ void main() {
     // Also make sure we can read individual columns
     expect(row.read(todos.id), 5);
     expect(row.read(categories.description), 'description');
+
+    expect(row.read(todos.status), 'workInProgress');
+    expect(row.readWithConverter(todos.status), TodoStatus.workInProgress);
 
     verify(executor.runSelect(argThat(contains('DISTINCT')), any));
   });
@@ -129,10 +134,14 @@ void main() {
     expect(
         row.readTable(db.todosTable),
         const TodoEntry(
-          id: 5,
+          id: RowId(5),
           title: 'title',
           content: 'content',
         ));
+
+    expect(row.readTableOrNull(db.categories), isNull);
+    expect(row.read(db.categories.id), isNull);
+    expect(row.readWithConverter(db.categories.priority), isNull);
   });
 
   test('where and order-by clauses are kept', () async {
@@ -247,7 +256,7 @@ void main() {
       result.readTable(categories),
       equals(
         const Category(
-          id: 3,
+          id: RowId(3),
           description: 'Description',
           descriptionInUpperCase: 'DESCRIPTION',
           priority: CategoryPriority.medium,
@@ -297,7 +306,7 @@ void main() {
       result.readTable(categories),
       equals(
         const Category(
-          id: 3,
+          id: RowId(3),
           description: 'Description',
           descriptionInUpperCase: 'DESCRIPTION',
           priority: CategoryPriority.medium,
@@ -353,7 +362,7 @@ void main() {
     expect(
       result.readTable(categories),
       const Category(
-        id: 3,
+        id: RowId(3),
         description: 'desc',
         descriptionInUpperCase: 'DESC',
         priority: CategoryPriority.low,

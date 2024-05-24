@@ -103,17 +103,18 @@ void main() {
         SqlEngine(EngineOptions(driftOptions: const DriftSqlOptions()));
     final stmt = engine.parse('''
     CREATE TABLE foo (
-      a BOOL, b DATETIME, c DATE, d BOOLEAN NOT NULL
+      a BOOL, b DATETIME, c DATE, d BOOLEAN NOT NULL, e INT64
     )
     ''').rootNode;
 
     final table = const SchemaFromCreateTable(driftExtensions: true)
         .read(stmt as CreateTableStatement);
     expect(table.resolvedColumns.map((c) => c.type), const [
-      ResolvedType(type: BasicType.int, hint: IsBoolean(), nullable: true),
-      ResolvedType(type: BasicType.int, hint: IsDateTime(), nullable: true),
-      ResolvedType(type: BasicType.int, hint: IsDateTime(), nullable: true),
-      ResolvedType(type: BasicType.int, hint: IsBoolean(), nullable: false),
+      ResolvedType(type: BasicType.int, hints: [IsBoolean()], nullable: true),
+      ResolvedType(type: BasicType.int, hints: [IsDateTime()], nullable: true),
+      ResolvedType(type: BasicType.int, hints: [IsDateTime()], nullable: true),
+      ResolvedType(type: BasicType.int, hints: [IsBoolean()], nullable: false),
+      ResolvedType(type: BasicType.int, hints: [IsBigInt()], nullable: true),
     ]);
   });
 

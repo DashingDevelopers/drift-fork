@@ -200,6 +200,56 @@ class LintingVisitor extends RecursiveVisitor<void, void> {
   }
 
   @override
+  void visitInExpression(InExpression e, void arg) {
+    final expectedColumns = switch (e.left) {
+      Tuple(:var expressions) => expressions.length,
+      _ => 1,
+    };
+
+    switch (e.inside) {
+      case Tuple tuple:
+        for (final element in tuple.expressions) {
+          final actualColumns = switch (element) {
+            Tuple(:var expressions) => expressions.length,
+            _ => 1,
+          };
+
+          if (expectedColumns != actualColumns) {
+            context.reportError(AnalysisError(
+              type: AnalysisErrorType.other,
+              message: 'Expected $expectedColumns columns in this entry, got '
+                  '$actualColumns',
+              relevantNode: element,
+            ));
+          }
+        }
+      case SubQuery subquery:
+        final columns = subquery.select.resolvedColumns;
+        if (columns != null && columns.length != expectedColumns) {
+          context.reportError(AnalysisError(
+            type: AnalysisErrorType.other,
+            message: 'The subquery must return $expectedColumns columns, '
+                'it returns ${columns.length}',
+            relevantNode: subquery,
+          ));
+        }
+      case TableOrSubquery table:
+        final columns =
+            table.availableResultSet?.resultSet.resultSet?.resolvedColumns;
+        if (columns != null && columns.length != expectedColumns) {
+          context.reportError(AnalysisError(
+            type: AnalysisErrorType.other,
+            message: 'To be used in this `IN` expression, this table must '
+                'have $expectedColumns columns (it has ${columns.length}).',
+            relevantNode: table,
+          ));
+        }
+    }
+
+    visitChildren(e, arg);
+  }
+
+  @override
   void visitIsExpression(IsExpression e, void arg) {
     if (e.distinctFromSyntax && options.version < SqliteVersion.v3_39) {
       // `IS NOT DISTINCT FROM` is the same thing as `IS`
@@ -278,6 +328,7 @@ class LintingVisitor extends RecursiveVisitor<void, void> {
       'format' || 'unixepoch' => SqliteVersion.v3_38,
       'unhex' => SqliteVersion.v3_41,
       'timediff' || 'octet_length' => SqliteVersion.v3_43,
+      'concat' || 'concat_ws' || 'string_agg' => SqliteVersion.v3_44,
       _ => null,
     };
 
@@ -387,9 +438,8 @@ class LintingVisitor extends RecursiveVisitor<void, void> {
     visitChildren(e, arg);
   }
 
-  @override
-  void visitSetComponent(SetComponent e, void arg) {
-    final target = e.column.resolvedColumn;
+  void _checkForGeneratedColumn(Reference column) {
+    final target = column.resolvedColumn;
 
     if (target is TableColumn && target.isGenerated) {
       context.reportError(
@@ -397,7 +447,43 @@ class LintingVisitor extends RecursiveVisitor<void, void> {
           type: AnalysisErrorType.writeToGeneratedColumn,
           message: 'This column is generated, and generated columns cannot be '
               'updated explicitly.',
-          relevantNode: e.column,
+          relevantNode: column,
+        ),
+      );
+    }
+  }
+
+  @override
+  void visitSingleColumnSetComponent(SingleColumnSetComponent e, void arg) {
+    _checkForGeneratedColumn(e.column);
+    visitChildren(e, arg);
+  }
+
+  @override
+  void visitMultiColumnSetComponent(MultiColumnSetComponent e, void arg) {
+    for (final column in e.columns) {
+      _checkForGeneratedColumn(column);
+    }
+
+    if (e.rowValue is Tuple &&
+        e.columns.length != (e.rowValue as Tuple).expressions.length) {
+      context.reportError(
+        AnalysisError(
+          type: AnalysisErrorType.cteColumnCountMismatch,
+          message:
+              'Length of column-name-list must match length of row values.',
+          relevantNode: e.rowValue,
+        ),
+      );
+    } else if (e.rowValue is SubQuery &&
+        e.columns.length !=
+            (e.rowValue as SubQuery).select.resolvedColumns?.length) {
+      context.reportError(
+        AnalysisError(
+          type: AnalysisErrorType.cteColumnCountMismatch,
+          message:
+              'Length of column-name-list must match length of columns returned by SubQuery.',
+          relevantNode: e.rowValue,
         ),
       );
     }
@@ -490,9 +576,11 @@ class LintingVisitor extends RecursiveVisitor<void, void> {
         isAllowed = !comparisons.any((e) => !isRowValue(e));
       }
     } else if (parent is InExpression) {
-      // In expressions are tricky. The rhs can always be a row value, but the
-      // lhs can only be a row value if the rhs is a subquery
-      isAllowed = e == parent.inside || parent.inside is SubQuery;
+      // For in expressions we have a more accurate analysis on whether tuples
+      // are allowed that looks at both the LHS and the RHS.
+      isAllowed = true;
+    } else if (parent is SetComponent) {
+      isAllowed = true;
     }
 
     if (!isAllowed) {

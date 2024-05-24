@@ -5,8 +5,7 @@ class DeleteStatement<T extends Table, D> extends Query<T, D>
     with SingleTableQueryMixin<T, D> {
   /// This constructor should be called by [DatabaseConnectionUser.delete] for
   /// you.
-  DeleteStatement(DatabaseConnectionUser database, TableInfo<T, D> table)
-      : super(database, table);
+  DeleteStatement(super.database, TableInfo<T, D> super.table);
 
   @override
   void writeStartPart(GenerationContext ctx) {
@@ -50,7 +49,7 @@ class DeleteStatement<T extends Table, D> extends Query<T, D>
   Future<int> go() async {
     final ctx = constructQuery();
 
-    return ctx.executor!.doWhenOpened((e) async {
+    return database.withCurrentExecutor((e) async {
       final rows = await e.runDelete(ctx.sql, ctx.boundVariables);
 
       if (rows > 0) {
@@ -70,7 +69,7 @@ class DeleteStatement<T extends Table, D> extends Query<T, D>
   Future<List<D>> _goReturning() async {
     final ctx = constructQuery();
 
-    return ctx.executor!.doWhenOpened((e) async {
+    return database.withCurrentExecutor((e) async {
       final rows = await e.runSelect(ctx.sql, ctx.boundVariables);
 
       if (rows.isNotEmpty) {

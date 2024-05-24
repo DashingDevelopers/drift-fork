@@ -11,6 +11,7 @@ import 'update_companion_writer.dart';
 /// Both classes need to generate column getters and a mapping function.
 abstract class TableOrViewWriter {
   DriftElementWithResultSet get tableOrView;
+
   TextEmitter get emitter;
 
   StringBuffer get buffer => emitter.buffer;
@@ -45,11 +46,10 @@ abstract class TableOrViewWriter {
       final typeName =
           emitter.dartCode(emitter.writer.converterType(converter));
       final code = emitter.dartCode(converter.expression);
-
       buffer.write('static $typeName ${converter.fieldName} = $code;');
 
       // Generate wrappers for non-nullable type converters that are applied to
-      // nullable converters.
+      // nullable columns.
       final column = converter.owningColumn!;
       if (converter.canBeSkippedForNulls && column.nullable) {
         final nullableTypeName = emitter.dartCode(
@@ -210,7 +210,13 @@ abstract class TableOrViewWriter {
       }
     }
 
-    additionalParams['type'] = emitter.drift(column.sqlType.toString());
+    switch (column.sqlType) {
+      case ColumnDriftType():
+        additionalParams['type'] =
+            emitter.drift(column.sqlType.builtin.toString());
+      case ColumnCustomType(:final custom):
+        additionalParams['type'] = emitter.dartCode(custom.expression);
+    }
 
     if (isRequiredForInsert != null) {
       additionalParams['requiredDuringInsert'] = isRequiredForInsert.toString();
@@ -256,7 +262,7 @@ abstract class TableOrViewWriter {
           emitter.dartCode(column.clientDefaultCode!);
     }
 
-    final innerType = emitter.innerColumnType(column);
+    final innerType = emitter.innerColumnType(column.sqlType);
     var type =
         '${emitter.drift('GeneratedColumn')}<${emitter.dartCode(innerType)}>';
     expressionBuffer
@@ -407,9 +413,9 @@ class TableWriter extends TableOrViewWriter {
     writeGetColumnsOverride();
     buffer
       ..write('@override\nString get aliasedName => '
-          '_alias ?? \'${table.id.name}\';\n')
-      ..write(
-          '@override\n String get actualTableName => \'${table.id.name}\';\n');
+          '_alias ?? actualTableName;\n')
+      ..write('@override\n String get actualTableName => \$name;\n')
+      ..write('static const String \$name = \'${table.id.name}\';\n');
 
     _writeValidityCheckMethod();
     _writePrimaryKeyOverride();
@@ -428,7 +434,7 @@ class TableWriter extends TableOrViewWriter {
   }
 
   void writeToColumnsMixin() {
-    buffer.write('mixin ${table.baseDartName}ToColumns ');
+    buffer.write('mixin ${table.toColumnsMixin} ');
 
     final type = emitter.dartCode(emitter.writer.rowType(table));
     buffer.writeln('implements ${emitter.drift('Insertable')}<$type> {');
@@ -448,10 +454,11 @@ class TableWriter extends TableOrViewWriter {
   void _writeColumnVerificationMeta(DriftColumn column) {
     if (!_skipVerification) {
       final meta = emitter.drift('VerificationMeta');
+      final arg = asDartLiteral(column.nameInDart);
 
       buffer
         ..write('static const $meta ${_fieldNameForColumnMeta(column)} = ')
-        ..writeln("const $meta('${column.nameInDart}');");
+        ..writeln("const $meta($arg);");
     }
   }
 

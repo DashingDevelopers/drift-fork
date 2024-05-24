@@ -1,10 +1,11 @@
 import 'package:drift/drift.dart';
+import 'package:path/path.dart' show url;
 import 'package:recase/recase.dart';
 import 'package:sqlparser/sqlparser.dart' as sql;
-import 'package:path/path.dart' show url;
 
-import '../analysis/results/results.dart';
 import '../analysis/options.dart';
+import '../analysis/results/results.dart';
+import '../utils/string_escaper.dart';
 import 'import_manager.dart';
 import 'queries/sql_writer.dart';
 
@@ -25,6 +26,7 @@ class Writer extends _NodeOrWriter {
   final GenerationOptions generationOptions;
 
   TextEmitter get header => _header;
+
   TextEmitter get imports => _imports;
 
   @override
@@ -50,6 +52,7 @@ class Writer extends _NodeOrWriter {
   }
 
   Scope child() => _root.child();
+
   TextEmitter leaf() => _root.leaf();
 }
 
@@ -71,9 +74,10 @@ abstract class _NodeOrWriter {
   }
 
   AnnotatedDartCode companionType(DriftTable table) {
-    final baseName = writer.options.useDataClassNameForCompanions
-        ? table.nameOfRowClass
-        : table.baseDartName;
+    final baseName = table.nameOfCompanionClass ??
+        (writer.options.useDataClassNameForCompanions
+            ? table.nameOfRowClass
+            : table.baseDartName);
 
     return generatedElement(table, '${baseName}Companion');
   }
@@ -99,34 +103,39 @@ abstract class _NodeOrWriter {
   /// Returns a Dart expression evaluating to the [converter].
   AnnotatedDartCode readConverter(AppliedTypeConverter converter,
       {bool forNullable = false}) {
-    if (converter.owningColumn == null) {
-      // Type converters applied to individual columns in the result set of a
-      // `SELECT` query don't have an owning table. We instead write the
-      // expression here.
-      return AnnotatedDartCode.build((b) {
-        final implicitlyNullable =
-            converter.canBeSkippedForNulls && forNullable;
+    return AnnotatedDartCode.build((b) {
+      final owningColumn = converter.owningColumn;
+      final needsImplicitNullableVersion =
+          forNullable && converter.canBeSkippedForNulls;
+      final hasNullableVariantInField = owningColumn != null &&
+          converter.canBeSkippedForNulls &&
+          owningColumn.nullable;
 
-        if (implicitlyNullable) {
+      void addRegularConverter() {
+        if (owningColumn != null) {
+          b
+            ..addCode(entityInfoType(owningColumn.owner))
+            ..addText('.${converter.fieldName}');
+        } else {
+          // There's no field storing this converter, so evaluate it every time
+          // it is used.
+          b.addCode(converter.expression);
+        }
+      }
+
+      switch ((needsImplicitNullableVersion, hasNullableVariantInField)) {
+        case (false, _):
+          addRegularConverter();
+        case (true, false):
           b.addSymbol('NullAwareTypeConverter.wrap(', AnnotatedDartCode.drift);
-        }
-
-        b.addCode(converter.expression);
-
-        if (implicitlyNullable) {
+          b.addCode(converter.expression);
           b.addText(')');
-        }
-      });
-    } else {
-      final fieldName = forNullable && converter.canBeSkippedForNulls
-          ? converter.nullableFieldName
-          : converter.fieldName;
-
-      return AnnotatedDartCode([
-        ...entityInfoType(converter.owningColumn!.owner).elements,
-        '.$fieldName',
-      ]);
-    }
+        case (true, true):
+          b
+            ..addCode(entityInfoType(converter.owningColumn!.owner))
+            ..addText('.${converter.nullableFieldName}');
+      }
+    });
   }
 
   /// A suitable typename to store an instance of the type converter used here.
@@ -134,7 +143,16 @@ abstract class _NodeOrWriter {
       {bool makeNullable = false}) {
     // Write something like `TypeConverter<MyFancyObject, String>`
     return AnnotatedDartCode.build((b) {
-      var sqlDartType = dartTypeNames[converter.sqlType]!;
+      AnnotatedDartCode sqlDartType;
+
+      switch (converter.sqlType) {
+        case ColumnDriftType():
+          sqlDartType =
+              AnnotatedDartCode([dartTypeNames[converter.sqlType.builtin]!]);
+        case ColumnCustomType(:final custom):
+          sqlDartType = AnnotatedDartCode.type(custom.dartType);
+      }
+
       final className = converter.alsoAppliesToJsonConversion
           ? 'JsonTypeConverter2'
           : 'TypeConverter';
@@ -145,7 +163,7 @@ abstract class _NodeOrWriter {
         ..addDartType(converter.dartType)
         ..questionMarkIfNullable(makeNullable)
         ..addText(',')
-        ..addTopLevel(sqlDartType)
+        ..addCode(sqlDartType)
         ..questionMarkIfNullable(makeNullable || converter.sqlTypeIsNullable);
 
       if (converter.alsoAppliesToJsonConversion) {
@@ -166,10 +184,12 @@ abstract class _NodeOrWriter {
   /// The Dart type that matches the type of this column, ignoring type
   /// converters.
   ///
-  /// This is the same as [dartType] but without custom types.
-  AnnotatedDartCode variableTypeCode(HasType type, {bool? nullable}) {
-    if (type.isArray) {
-      final inner = innerColumnType(type, nullable: nullable ?? type.nullable);
+  /// This is the same as [dartType] but without type converters.
+  AnnotatedDartCode variableTypeCode(HasType type,
+      {bool? nullable, bool ignoreArray = false}) {
+    if (type.isArray && !ignoreArray) {
+      final inner =
+          innerColumnType(type.sqlType, nullable: nullable ?? type.nullable);
       return AnnotatedDartCode([
         DartTopLevelSymbol.list,
         '<',
@@ -177,7 +197,7 @@ abstract class _NodeOrWriter {
         '>',
       ]);
     } else {
-      return innerColumnType(type, nullable: nullable ?? type.nullable);
+      return innerColumnType(type.sqlType, nullable: nullable ?? type.nullable);
     }
   }
 
@@ -185,11 +205,56 @@ abstract class _NodeOrWriter {
   /// [nullable] parameter.
   ///
   /// This type does not respect type converters or arrays.
-  AnnotatedDartCode innerColumnType(HasType type, {bool nullable = false}) {
-    return AnnotatedDartCode([
-      dartTypeNames[type.sqlType],
-      if (nullable) '?',
-    ]);
+  AnnotatedDartCode innerColumnType(ColumnType type, {bool nullable = false}) {
+    return AnnotatedDartCode.build((b) {
+      switch (type) {
+        case ColumnDriftType():
+          b.addTopLevel(dartTypeNames[type.builtin]!);
+        case ColumnCustomType(:final custom):
+          b.addDartType(custom.dartType);
+      }
+
+      if (nullable) {
+        b.addText('?');
+      }
+    });
+  }
+
+  AnnotatedDartCode wrapInVariable(HasType column, AnnotatedDartCode expression,
+      {bool ignoreArray = false}) {
+    return AnnotatedDartCode.build((b) {
+      b
+        ..addTopLevel(DartTopLevelSymbol.drift('Variable'))
+        ..addText('<')
+        ..addCode(
+            variableTypeCode(column, nullable: false, ignoreArray: ignoreArray))
+        ..addText('>(');
+
+      final converter = column.typeConverter;
+      if (converter != null) {
+        // apply type converter before writing the variable
+        b
+          ..addCode(readConverter(converter, forNullable: column.nullable))
+          ..addText('.toSql(')
+          ..addCode(expression)
+          ..addText(')');
+      } else {
+        b.addCode(expression);
+      }
+
+      switch (column.sqlType) {
+        case ColumnDriftType():
+          break;
+        case ColumnCustomType(:final custom):
+          // Also specify the custom type since it can't be inferred from the
+          // value passed to the variable.
+          b
+            ..addText(', ')
+            ..addCode(custom.expression);
+      }
+
+      b.addText(')');
+    });
   }
 
   String refUri(Uri definition, String element) {
@@ -298,6 +363,10 @@ class Scope extends _Node {
   /// This can be used to generated methods which must have a unique name-
   int counter = 0;
 
+  /// The set of names already used in this scope. Used by methods like
+  /// [getNonConflictingName] to prevent name collisions.
+  final Set<String> _usedNames = {};
+
   Scope({required Scope? parent, Writer? writer})
       : writer = writer ?? parent!.writer,
         super(parent);
@@ -325,6 +394,28 @@ class Scope extends _Node {
     _children.add(child);
     return child;
   }
+
+  /// Reserve a collection of names in this scope. See [getNonConflictingName]
+  /// for more information.
+  void reserveNames(Iterable<String> names) {
+    _usedNames.addAll(names);
+  }
+
+  /// Returns a variation of [name] that does not conflict with any names
+  /// already in use in this [Scope].
+  ///
+  /// If [name] does not conflict with any existing names then it is returned
+  /// unmodified. If a conflict is detected then [name] is repeatedly passed to
+  /// [modify] until the result no longer conflicts. Each result returned from
+  /// this method is recorded in an internal set, so subsequent calls with the
+  /// same name will produce a different, non-conflicting result.
+  String getNonConflictingName(String name, String Function(String) modify) {
+    while (_usedNames.contains(name)) {
+      name = modify(name);
+    }
+    _usedNames.add(name);
+    return name;
+  }
 }
 
 class TextEmitter extends _Node {
@@ -335,6 +426,7 @@ class TextEmitter extends _Node {
   TextEmitter(Scope super.parent) : writer = parent.writer;
 
   void write(Object? object) => buffer.write(object);
+
   void writeln(Object? object) => buffer.writeln(object);
 
   void writeUriRef(Uri definition, String element) {
@@ -357,6 +449,10 @@ class TextEmitter extends _Node {
 
   void writeSqlByDialectMap(sql.AstNode node) {
     _writeSqlByDialectMap(node, buffer);
+  }
+
+  void stringLiteral(String contents) {
+    return buffer.write(asDartLiteral(contents));
   }
 }
 

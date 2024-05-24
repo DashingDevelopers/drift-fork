@@ -1,6 +1,5 @@
 import 'package:analyzer/dart/element/element.dart';
 import 'package:drift_dev/src/analysis/options.dart';
-import 'package:drift_dev/src/services/schema/verifier_impl.dart';
 import 'package:logging/logging.dart';
 import 'package:sqlite3/common.dart';
 import 'package:sqlparser/sqlparser.dart';
@@ -8,6 +7,7 @@ import 'package:sqlparser/sqlparser.dart';
 import '../../analysis/backend.dart';
 import '../../analysis/driver/driver.dart';
 import '../../analysis/results/results.dart';
+import 'verifier_common.dart';
 
 /// Extracts drift elements from the schema of an existing database.
 ///
@@ -22,14 +22,14 @@ Future<List<DriftElement>> extractDriftElementsFromDatabase(
   final uri = Uri.parse('db.drift');
   final backend = _SingleFileNoAnalyzerBackend(logger, uri);
   final driver = DriftAnalysisDriver(
-    backend,
-    DriftOptions.defaults(
-      sqliteAnalysisOptions: SqliteAnalysisOptions(
-        modules: SqlModule.values,
-        version: SqliteVersion.current,
+      backend,
+      DriftOptions.defaults(
+        sqliteAnalysisOptions: SqliteAnalysisOptions(
+          modules: SqlModule.values,
+          version: SqliteVersion.current,
+        ),
       ),
-    ),
-  );
+      isTesting: true);
 
   final engineForParsing = driver.newSqlEngine();
   final entities = <String, String>{};
@@ -90,6 +90,9 @@ class _SingleFileNoAnalyzerBackend extends DriftBackend {
   Future<String> readAsString(Uri uri) {
     return Future.value(contents);
   }
+
+  @override
+  bool get canReadDart => false;
 
   @override
   Future<LibraryElement> readDart(Uri uri) async {

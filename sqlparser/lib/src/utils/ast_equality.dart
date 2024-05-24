@@ -608,8 +608,14 @@ class EqualityEnforcingVisitor implements AstVisitor<void, void> {
   }
 
   @override
-  void visitSetComponent(SetComponent e, void arg) {
-    _currentAs<SetComponent>(e);
+  void visitSingleColumnSetComponent(SingleColumnSetComponent e, void arg) {
+    _currentAs<SingleColumnSetComponent>(e);
+    _checkChildren(e);
+  }
+
+  @override
+  void visitMultiColumnSetComponent(MultiColumnSetComponent e, void arg) {
+    _currentAs<MultiColumnSetComponent>(e);
     _checkChildren(e);
   }
 
@@ -636,7 +642,7 @@ class EqualityEnforcingVisitor implements AstVisitor<void, void> {
   @override
   void visitStringLiteral(StringLiteral e, void arg) {
     final current = _currentAs<StringLiteral>(e);
-    _assert(current.value == e.value, e);
+    _assert(current.value == e.value && current.isBinary == e.isBinary, e);
     _checkChildren(e);
   }
 

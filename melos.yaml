@@ -8,7 +8,9 @@ packages:
  - drift_dev
  - sqlparser
  - examples/*
+ - examples/multi_package/*
  - extras/benchmarks
+ - extras/drift_devtools_extension
  - extras/drift_mariadb
  - extras/drift_postgres
  - extras/encryption

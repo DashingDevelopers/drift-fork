@@ -57,7 +57,7 @@ abstract class Expression<D extends Object> implements FunctionParameter {
   /// nullable values and translates to a direct `=` comparison in SQL.
   /// To compare this column to `null`, use [isValue].
   Expression<bool> equals(D compare) =>
-      _Comparison.equal(this, Variable<D>(compare));
+      _Comparison.equal(this, variable(compare));
 
   /// Compares the value of this column to [compare] or `null`.
   ///
@@ -81,8 +81,8 @@ abstract class Expression<D extends Object> implements FunctionParameter {
   /// in sql, use [cast].
   ///
   /// This method is used internally by drift.
-  Expression<D2> dartCast<D2 extends Object>() {
-    return _DartCastExpression<D, D2>(this);
+  Expression<D2> dartCast<D2 extends Object>({CustomSqlType<D2>? customType}) {
+    return _DartCastExpression<D, D2>(this, customType);
   }
 
   /// Generates a `CAST(expression AS TYPE)` expression.
@@ -90,8 +90,13 @@ abstract class Expression<D extends Object> implements FunctionParameter {
   /// Note that this does not do a meaningful conversion for drift-only types
   /// like `bool` or `DateTime`. Both would simply generate a `CAST AS INT`
   /// expression.
-  Expression<D2> cast<D2 extends Object>() {
-    return _CastInSqlExpression<D, D2>(this);
+  ///
+  /// The optional [type] parameter can be used to specify the SQL type to cast
+  /// to. This is mainly useful for [CustomSqlType]s. For types supported by
+  /// drift, [DriftSqlType.forType] will be used as a default.
+  Expression<D2> cast<D2 extends Object>([BaseSqlType<D2>? type]) {
+    return _CastInSqlExpression<D, D2>(
+        this, type ?? DriftSqlType.forType<D2>());
   }
 
   /// Generates an `IS` expression in SQL, comparing this expression with the
@@ -101,7 +106,7 @@ abstract class Expression<D extends Object> implements FunctionParameter {
   /// Dart. When this expression and [value] are both non-null, this is the same
   /// as [equals]. Two `NULL` values are considered equal as well.
   Expression<bool> isValue(D value) {
-    return isExp(Variable<D>(value));
+    return isExp(variable(value));
   }
 
   /// Generates an `IS NOT` expression in SQL, comparing this expression with
@@ -109,7 +114,7 @@ abstract class Expression<D extends Object> implements FunctionParameter {
   ///
   /// This the inverse of [isValue].
   Expression<bool> isNotValue(D value) {
-    return isNotExp(Variable<D>(value));
+    return isNotExp(variable(value));
   }
 
   /// Expression that is true if the inner expression resolves to a null value.
@@ -142,13 +147,13 @@ abstract class Expression<D extends Object> implements FunctionParameter {
   /// An expression that is true if `this` resolves to any of the values in
   /// [values].
   Expression<bool> isIn(Iterable<D> values) {
-    return isInExp([for (final value in values) Variable<D>(value)]);
+    return isInExp([for (final value in values) variable(value)]);
   }
 
   /// An expression that is true if `this` does not resolve to any of the values
   /// in [values].
   Expression<bool> isNotIn(Iterable<D> values) {
-    return isNotInExp([for (final value in values) Variable<D>(value)]);
+    return isNotInExp([for (final value in values) variable(value)]);
   }
 
   /// An expression that evaluates to `true` if this expression resolves to a
@@ -269,8 +274,43 @@ abstract class Expression<D extends Object> implements FunctionParameter {
     inner.writeAroundPrecedence(ctx, precedence);
   }
 
-  /// The supported [DriftSqlType] backing this expression.
-  DriftSqlType<D> get driftSqlType => DriftSqlType.forType();
+  /// The [BaseSqlType] backing this expression.
+  ///
+  /// This is a recognized [DriftSqlType] for all expressions for which a custom
+  /// type has not explicitly been set.
+  BaseSqlType<D> get driftSqlType => DriftSqlType.forType();
+
+  /// Chains all [predicates] together into a single expression that will
+  /// evaluate to `true` iff any of the [predicates] evaluates to `true`.
+  ///
+  /// The [ifEmpty] value will be used when no predicates have been passed to
+  /// [or]. By default, `false` is returned.
+  static Expression<bool> or(
+    Iterable<Expression<bool>> predicates, {
+    Expression<bool> ifEmpty = const Constant(false),
+  }) {
+    if (predicates.isEmpty) {
+      return ifEmpty;
+    }
+
+    return predicates.reduce((value, element) => value | element);
+  }
+
+  /// Chains all [predicates] together into a single expression that will
+  /// evaluate to `true` iff all of the [predicates] evaluates to `true`.
+  ///
+  /// The [ifEmpty] value will be used when no predicates have been passed to
+  /// [or]. By default, `true` is returned.
+  static Expression<bool> and(
+    Iterable<Expression<bool>> predicates, {
+    Expression<bool> ifEmpty = const Constant(true),
+  }) {
+    if (predicates.isEmpty) {
+      return ifEmpty;
+    }
+
+    return predicates.reduce((value, element) => value & element);
+  }
 }
 
 /// Used to order the precedence of sql expressions so that we can avoid
@@ -438,8 +478,12 @@ class _UnaryMinus<DT extends Object> extends Expression<DT> {
 class _DartCastExpression<D1 extends Object, D2 extends Object>
     extends Expression<D2> {
   final Expression<D1> inner;
+  final CustomSqlType<D2>? _customSqlType;
 
-  const _DartCastExpression(this.inner);
+  const _DartCastExpression(this.inner, this._customSqlType);
+
+  @override
+  BaseSqlType<D2> get driftSqlType => _customSqlType ?? super.driftSqlType;
 
   @override
   Precedence get precedence => inner.precedence;
@@ -471,16 +515,20 @@ class _DartCastExpression<D1 extends Object, D2 extends Object>
 class _CastInSqlExpression<D1 extends Object, D2 extends Object>
     extends Expression<D2> {
   final Expression<D1> inner;
+  final BaseSqlType<D2> targetType;
 
   @override
   Precedence get precedence => Precedence.primary;
 
-  const _CastInSqlExpression(this.inner);
+  @override
+  BaseSqlType<D2> get driftSqlType => targetType;
+
+  const _CastInSqlExpression(this.inner, this.targetType);
 
   @override
   void writeInto(GenerationContext context) {
-    final type = DriftSqlType.forType<D2>();
-    if (type == DriftSqlType.any) {
+    // ignore: unrelated_type_equality_checks
+    if (targetType == DriftSqlType.any) {
       inner.writeInto(context); // No need to cast
     }
 
@@ -491,7 +539,7 @@ class _CastInSqlExpression<D1 extends Object, D2 extends Object>
       // ones used in a create table statement.
 
       // ignore: unnecessary_cast
-      typeName = switch (type as DriftSqlType<Object>) {
+      typeName = switch (targetType) {
         DriftSqlType.int ||
         DriftSqlType.bigInt ||
         DriftSqlType.bool =>
@@ -501,9 +549,12 @@ class _CastInSqlExpression<D1 extends Object, D2 extends Object>
         DriftSqlType.blob => 'BINARY',
         DriftSqlType.dateTime => 'DATETIME',
         DriftSqlType.any => '',
+        CustomSqlType() ||
+        DialectAwareSqlType() =>
+          targetType.sqlTypeName(context),
       };
     } else {
-      typeName = type.sqlTypeName(context);
+      typeName = targetType.sqlTypeName(context);
     }
 
     context.buffer.write('CAST(');
@@ -585,7 +636,7 @@ class _SubqueryExpression<R extends Object> extends Expression<R> {
   int get hashCode => statement.hashCode;
 
   @override
-  bool operator ==(Object? other) {
+  bool operator ==(Object other) {
     return other is _SubqueryExpression && other.statement == statement;
   }
 }

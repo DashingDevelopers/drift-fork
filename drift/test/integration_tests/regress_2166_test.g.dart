@@ -26,9 +26,10 @@ class $_SomeTableTable extends _SomeTable
   @override
   List<GeneratedColumn> get $columns => [id, name];
   @override
-  String get aliasedName => _alias ?? 'some_table';
+  String get aliasedName => _alias ?? actualTableName;
   @override
-  String get actualTableName => 'some_table';
+  String get actualTableName => $name;
+  static const String $name = 'some_table';
   @override
   VerificationContext validateIntegrity(Insertable<_SomeTableData> instance,
       {bool isInserting = false}) {
@@ -183,10 +184,105 @@ class _SomeTableCompanion extends UpdateCompanion<_SomeTableData> {
 
 abstract class _$_SomeDb extends GeneratedDatabase {
   _$_SomeDb(QueryExecutor e) : super(e);
+  _$_SomeDbManager get managers => _$_SomeDbManager(this);
   late final $_SomeTableTable someTable = $_SomeTableTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
   List<DatabaseSchemaEntity> get allSchemaEntities => [someTable];
+}
+
+typedef $$_SomeTableTableInsertCompanionBuilder = _SomeTableCompanion Function({
+  Value<int> id,
+  Value<String?> name,
+});
+typedef $$_SomeTableTableUpdateCompanionBuilder = _SomeTableCompanion Function({
+  Value<int> id,
+  Value<String?> name,
+});
+
+class $$_SomeTableTableTableManager extends RootTableManager<
+    _$_SomeDb,
+    $_SomeTableTable,
+    _SomeTableData,
+    $$_SomeTableTableFilterComposer,
+    $$_SomeTableTableOrderingComposer,
+    $$_SomeTableTableProcessedTableManager,
+    $$_SomeTableTableInsertCompanionBuilder,
+    $$_SomeTableTableUpdateCompanionBuilder> {
+  $$_SomeTableTableTableManager(_$_SomeDb db, $_SomeTableTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$_SomeTableTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$_SomeTableTableOrderingComposer(ComposerState(db, table)),
+          getChildManagerBuilder: (p) =>
+              $$_SomeTableTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<int> id = const Value.absent(),
+            Value<String?> name = const Value.absent(),
+          }) =>
+              _SomeTableCompanion(
+            id: id,
+            name: name,
+          ),
+          getInsertCompanionBuilder: ({
+            Value<int> id = const Value.absent(),
+            Value<String?> name = const Value.absent(),
+          }) =>
+              _SomeTableCompanion.insert(
+            id: id,
+            name: name,
+          ),
+        ));
+}
+
+class $$_SomeTableTableProcessedTableManager extends ProcessedTableManager<
+    _$_SomeDb,
+    $_SomeTableTable,
+    _SomeTableData,
+    $$_SomeTableTableFilterComposer,
+    $$_SomeTableTableOrderingComposer,
+    $$_SomeTableTableProcessedTableManager,
+    $$_SomeTableTableInsertCompanionBuilder,
+    $$_SomeTableTableUpdateCompanionBuilder> {
+  $$_SomeTableTableProcessedTableManager(super.$state);
+}
+
+class $$_SomeTableTableFilterComposer
+    extends FilterComposer<_$_SomeDb, $_SomeTableTable> {
+  $$_SomeTableTableFilterComposer(super.$state);
+  ColumnFilters<int> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get name => $state.composableBuilder(
+      column: $state.table.name,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+}
+
+class $$_SomeTableTableOrderingComposer
+    extends OrderingComposer<_$_SomeDb, $_SomeTableTable> {
+  $$_SomeTableTableOrderingComposer(super.$state);
+  ColumnOrderings<int> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get name => $state.composableBuilder(
+      column: $state.table.name,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
+
+class _$_SomeDbManager {
+  final _$_SomeDb _db;
+  _$_SomeDbManager(this._db);
+  $$_SomeTableTableTableManager get someTable =>
+      $$_SomeTableTableTableManager(_db, _db.someTable);
 }

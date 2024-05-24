@@ -52,10 +52,12 @@ class ElementSerializer {
           for (final constraint in element.tableConstraints)
             _serializeTableConstraint(constraint),
         ],
-        'custom_parent_class': element.customParentClass?.toJson(),
+        'custom_parent_class':
+            _serializeCustomParentClass(element.customParentClass),
         'fixed_entity_info_name': element.fixedEntityInfoName,
         'base_dart_name': element.baseDartName,
         'row_class_name': element.nameOfRowClass,
+        'companion_class_name': element.nameOfCompanionClass,
         'without_rowid': element.withoutRowId,
         'strict': element.strict,
         if (element.isVirtual)
@@ -128,7 +130,8 @@ class ElementSerializer {
           'staticReferences': [
             for (final reference in source.staticReferences)
               _serializeTableReferenceInDartView(reference),
-          ]
+          ],
+          'staticSource': source.staticSource
         };
       }
 
@@ -141,8 +144,10 @@ class ElementSerializer {
         'existing_data_class': element.existingRowClass != null
             ? _serializeExistingRowClass(element.existingRowClass!)
             : null,
-        'custom_parent_class': element.customParentClass?.toJson(),
+        'custom_parent_class':
+            _serializeCustomParentClass(element.customParentClass),
         'name_of_row_class': element.nameOfRowClass,
+        'name_of_companion_class': element.nameOfCompanionClass,
         'source': serializedSource,
       };
     } else if (element is BaseDriftAccessor) {
@@ -194,9 +199,23 @@ class ElementSerializer {
     };
   }
 
+  Map<String, Object?> _serializeColumnType(ColumnType type) {
+    return switch (type) {
+      ColumnDriftType() => {
+          'builtin': type.builtin.name,
+        },
+      ColumnCustomType(:final custom) => {
+          'custom': {
+            'dart': _serializeType(custom.dartType),
+            'expression': custom.expression.toJson(),
+          }
+        },
+    };
+  }
+
   Map<String, Object?> _serializeColumn(DriftColumn column) {
     return {
-      'sqlType': column.sqlType.name,
+      'sqlType': _serializeColumnType(column.sqlType),
       'nullable': column.nullable,
       'nameInSql': column.nameInSql,
       'nameInDart': column.nameInDart,
@@ -207,6 +226,7 @@ class ElementSerializer {
       'clientDefaultCode': column.clientDefaultCode?.toJson(),
       'defaultArgument': column.defaultArgument?.toJson(),
       'overriddenJsonName': column.overriddenJsonName,
+      'referenceName': column.referenceName,
       'documentationComment': column.documentationComment,
       'constraints': [
         for (final constraint in column.constraints)
@@ -296,6 +316,15 @@ class ElementSerializer {
     };
   }
 
+  Map<String, Object?>? _serializeCustomParentClass(CustomParentClass? pc) {
+    if (pc == null) return null;
+
+    return {
+      'class': pc.parentClass.toJson(),
+      'const': pc.isConst,
+    };
+  }
+
   String? _serializeReferenceAction(ReferenceAction? action) {
     return action?.name;
   }
@@ -306,7 +335,7 @@ class ElementSerializer {
       'expression': converter.expression.toJson(),
       'dart_type': _serializeType(converter.dartType),
       'json_type': _serializeType(converter.jsonType),
-      'sql_type': converter.sqlType.name,
+      'sql_type': _serializeColumnType(converter.sqlType),
       'dart_type_is_nullable': converter.dartTypeIsNullable,
       'sql_type_is_nullable': converter.sqlTypeIsNullable,
       'is_drift_enum_converter': converter.isDriftEnumTypeConverter,
@@ -428,6 +457,7 @@ class ElementDeserializer {
       state
         ..result = result
         ..isUpToDate = true;
+
       return result;
     } catch (e, s) {
       if (e is CouldNotDeserializeException) rethrow;
@@ -504,12 +534,12 @@ class ElementDeserializer {
             for (final constraint in json.list('table_constraints'))
               await _readTableConstraint(constraint as Map, columnByName),
           ],
-          customParentClass: json['custom_parent_class'] != null
-              ? AnnotatedDartCode.fromJson(json['custom_parent_class'] as Map)
-              : null,
+          customParentClass:
+              _readCustomParentClass(json['custom_parent_class'] as Map?),
           fixedEntityInfoName: json['fixed_entity_info_name'] as String?,
           baseDartName: json['base_dart_name'] as String,
           nameOfRowClass: json['row_class_name'] as String,
+          nameOfCompanionClass: json['companion_class_name'] as String?,
           withoutRowId: json['without_rowid'] as bool,
           strict: json['strict'] as bool,
           virtualTableData: virtualTableData,
@@ -632,6 +662,9 @@ class ElementDeserializer {
               for (final element in serializedSource.list('staticReferences'))
                 readReference(element as Map)
             ],
+            serializedSource['staticSource'] != null
+                ? serializedSource['staticSource'] as String
+                : null,
           );
         } else {
           throw UnsupportedError('Unknown view source $serializedSource');
@@ -643,10 +676,10 @@ class ElementDeserializer {
           references: references,
           columns: columns,
           entityInfoName: json['entity_info_name'] as String,
-          customParentClass: json['custom_parent_class'] != null
-              ? AnnotatedDartCode.fromJson(json['custom_parent_class'] as Map)
-              : null,
+          customParentClass:
+              _readCustomParentClass(json['custom_parent_class'] as Map?),
           nameOfRowClass: json['name_of_row_class'] as String,
+          nameOfCompanionClass: json['name_of_companion_class'] as String,
           existingRowClass: json['existing_data_class'] != null
               ? await _readExistingRowClass(
                   id.libraryUri, json['existing_data_class'] as Map)
@@ -708,11 +741,24 @@ class ElementDeserializer {
     }
   }
 
+  Future<ColumnType> _readColumnType(Map json, Uri definition) async {
+    if (json.containsKey('custom')) {
+      return ColumnType.custom(CustomColumnType(
+        AnnotatedDartCode.fromJson(json['expression'] as Map),
+        await _readDartType(definition, json['dart'] as int),
+      ));
+    } else {
+      return ColumnType.drift(
+          DriftSqlType.values.byName(json['builtin'] as String));
+    }
+  }
+
   Future<DriftColumn> _readColumn(Map json, DriftElementId ownTable) async {
     final rawConverter = json['typeConverter'] as Map?;
 
     return DriftColumn(
-      sqlType: DriftSqlType.values.byName(json['sqlType'] as String),
+      sqlType:
+          await _readColumnType(json['sqlType'] as Map, ownTable.libraryUri),
       nullable: json['nullable'] as bool,
       nameInSql: json['nameInSql'] as String,
       nameInDart: json['nameInDart'] as String,
@@ -728,6 +774,7 @@ class ElementDeserializer {
           ? AnnotatedDartCode.fromJson(json['defaultArgument'] as Map)
           : null,
       overriddenJsonName: json['overriddenJsonName'] as String?,
+      referenceName: json['referenceName'] as String?,
       documentationComment: json['documentationComment'] as String?,
       constraints: [
         for (final rawConstraint in json['constraints'] as List)
@@ -751,7 +798,7 @@ class ElementDeserializer {
       jsonType: json['json_type'] != null
           ? await _readDartType(definition, json['json_type'] as int)
           : null,
-      sqlType: DriftSqlType.values.byName(json['sql_type'] as String),
+      sqlType: await _readColumnType(json['sql_type'] as Map, definition),
       dartTypeIsNullable: json['dart_type_is_nullable'] as bool,
       sqlTypeIsNullable: json['sql_type_is_nullable'] as bool,
       isDriftEnumTypeConverter: json['is_drift_enum_converter'] as bool,
@@ -774,6 +821,15 @@ class ElementDeserializer {
       positionalColumns: (json['positional'] as List).cast(),
       namedColumns: (json['named'] as Map).cast(),
       generateInsertable: json['generate_insertable'] as bool,
+    );
+  }
+
+  CustomParentClass? _readCustomParentClass(Map? json) {
+    if (json == null) return null;
+
+    return CustomParentClass(
+      parentClass: AnnotatedDartCode.fromJson(json['class'] as Map),
+      isConst: json['const'] as bool,
     );
   }
 

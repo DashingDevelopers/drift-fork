@@ -1,5 +1,6 @@
 @TestOn('vm')
 import 'package:drift/drift.dart' hide isNull;
+import 'package:drift/internal/versioned_schema.dart';
 import 'package:drift/native.dart';
 import 'package:drift_dev/api/migrations.dart';
 import 'package:sqlite3/sqlite3.dart';
@@ -461,11 +462,40 @@ void main() {
       }
     }
   });
+
+  test('step-by-step migrations saves state halfway', () async {
+    final underlying = sqlite3.openInMemory()
+      ..execute('pragma user_version = 1;');
+    addTearDown(underlying.dispose);
+
+    final expectedException = Exception('schema upgrade!');
+
+    final db = TodoDb(NativeDatabase.opened(underlying))
+      ..schemaVersion = 5
+      ..migration =
+          MigrationStrategy(onUpgrade: VersionedSchema.stepByStepHelper(
+        step: (version, database) async {
+          await database.customStatement('CREATE TABLE t$version (id INT);');
+
+          if (version == 3) {
+            throw expectedException;
+          }
+
+          return version + 1;
+        },
+      ));
+
+    await expectLater(
+      db.customSelect('SELECT 1').get(),
+      throwsA(expectedException),
+    );
+
+    expect(underlying.userVersion, 3);
+  });
 }
 
 class _TestDatabase extends GeneratedDatabase {
-  _TestDatabase(QueryExecutor executor, this.schemaVersion, this.migration)
-      : super(executor);
+  _TestDatabase(super.executor, this.schemaVersion, this.migration);
 
   @override
   Iterable<TableInfo<Table, dynamic>> get allTables => const Iterable.empty();

@@ -4,8 +4,7 @@ part of '../query_builder.dart';
 class UpdateStatement<T extends Table, D> extends Query<T, D>
     with SingleTableQueryMixin<T, D> {
   /// Used internally by drift, construct an update statement
-  UpdateStatement(DatabaseConnectionUser database, TableInfo<T, D> table)
-      : super(database, table);
+  UpdateStatement(super.database, TableInfo<T, D> super.table);
 
   late Map<String, Expression> _updatedFields;
 
@@ -33,7 +32,7 @@ class UpdateStatement<T extends Table, D> extends Query<T, D>
 
   Future<int> _performQuery() async {
     final ctx = constructQuery();
-    final rows = await ctx.executor!.doWhenOpened((e) async {
+    final rows = await database.withCurrentExecutor((e) async {
       return await e.runUpdate(ctx.sql, ctx.boundVariables);
     });
 
@@ -85,7 +84,7 @@ class UpdateStatement<T extends Table, D> extends Query<T, D>
     await write(entity, dontExecute: true);
 
     final ctx = constructQuery();
-    final rows = await ctx.executor!.doWhenOpened((e) {
+    final rows = await database.withCurrentExecutor((e) {
       return e.runSelect(ctx.sql, ctx.boundVariables);
     });
 

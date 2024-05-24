@@ -1,5 +1,7 @@
 import 'package:build/build.dart';
 import 'package:dart_style/dart_style.dart';
+import 'package:drift_dev/src/writer/manager/database_manager_writer.dart';
+import 'package:meta/meta.dart';
 import 'package:pub_semver/pub_semver.dart';
 
 import '../../analysis/custom_result_class.dart';
@@ -102,7 +104,7 @@ class DriftBuilder extends Builder {
 
   @override
   Future<void> build(BuildStep buildStep) async {
-    final run = _DriftBuildRun(options, generationMode, buildStep);
+    final run = await _DriftBuildRun.init(options, generationMode, buildStep);
     await run.run();
   }
 }
@@ -133,16 +135,31 @@ class _DriftBuildRun {
   Set<Uri> analyzedUris = {};
   bool _didPrintWarning = false;
 
-  _DriftBuildRun(this.options, this.mode, this.buildStep)
-      : driver = DriftAnalysisDriver(DriftBuildBackend(buildStep), options)
-          ..cacheReader = BuildCacheReader(
-            buildStep,
-            // The discovery and analyzer builders will have emitted IR for
-            // every relevant file in a previous build step that this builder
-            // has a dependency on.
-            findsResolvedElementsReliably: !mode.embeddedAnalyzer,
-            findsLocalElementsReliably: !mode.embeddedAnalyzer,
-          );
+  @visibleForTesting
+  _DriftBuildRun(this.options, this.mode, this.buildStep, this.driver);
+
+  static Future<_DriftBuildRun> init(
+    DriftOptions options,
+    DriftGenerationMode mode,
+    BuildStep buildStep,
+  ) async {
+    return _DriftBuildRun(
+      options,
+      mode,
+      buildStep,
+      DriftAnalysisDriver(DriftBuildBackend(buildStep), options)
+        ..cacheReader = BuildCacheReader(
+          buildStep,
+          // The discovery and analyzer builders will have emitted IR for
+          // every relevant file in a previous build step that this builder
+          // has a dependency on.
+          findsResolvedElementsReliably:
+              !mode.embeddedAnalyzer || options.hasDriftAnalyzer,
+          findsLocalElementsReliably:
+              !mode.embeddedAnalyzer || options.hasDriftAnalyzer,
+        ),
+    );
+  }
 
   Future<void> run() async {
     await _warnAboutDeprecatedOptions();
@@ -159,7 +176,7 @@ class _DriftBuildRun {
       return;
     }
 
-    _createWriter();
+    await _createWriter();
     if (mode.isMonolithic) {
       await _generateMonolithic(fileResult);
     } else {
@@ -278,6 +295,10 @@ class _DriftBuildRun {
 
       if (result is DriftTable) {
         TableWriter(result, writer.child()).writeInto();
+
+        final scope = writer.child();
+        final manager = DatabaseManagerWriter(scope, '')..addTable(result);
+        manager.writeTableManagers();
       } else if (result is DriftView) {
         ViewWriter(result, writer.child(), null).write();
       } else if (result is DriftTrigger) {
@@ -301,7 +322,8 @@ class _DriftBuildRun {
 
         // Also write stubs for known custom functions so that the user can
         // easily register them on the database.
-        FunctionStubsWriter(driver, writer.leaf()).write();
+        FunctionStubsWriter(driver, await driver.typeMapping, writer.leaf())
+            .write();
       } else if (result is DatabaseAccessor) {
         final resolved =
             entrypointState.fileAnalysis!.resolvedDatabases[result.id]!;
@@ -346,7 +368,13 @@ class _DriftBuildRun {
         // In the monolithic build mode, we also need to analyze all reachable
         // imports - it is needed to fully resolve triggers and indices, and we
         // should also warn about issues in those files.
-        for (final file in driver.cache.crawlMulti(resolved.knownImports)) {
+        final importRoots = {
+          ...resolved.knownImports,
+          for (final element in resolved.availableElements)
+            if (driver.cache.knownFiles.containsKey(element.id.libraryUri))
+              driver.cache.knownFiles[element.id.libraryUri]!,
+        };
+        for (final file in driver.cache.crawlMulti(importRoots)) {
           await _analyze(file.ownUri);
         }
 
@@ -386,10 +414,10 @@ class _DriftBuildRun {
     }
   }
 
-  void _createWriter() {
+  Future<void> _createWriter() async {
     if (mode.isMonolithic) {
       final generationOptions = GenerationOptions(
-        imports: ImportManagerForPartFiles(),
+        imports: ImportManagerForPartFiles(await buildStep.inputLibrary),
       );
       writer = Writer(options, generationOptions: generationOptions);
     } else {

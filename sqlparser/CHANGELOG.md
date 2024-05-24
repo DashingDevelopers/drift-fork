@@ -1,3 +1,61 @@
+## 0.36.1
+
+- Add support for sqlite 3.46.0.
+
+## 0.36.0
+
+- Add support for the geopoly module.
+
+## 0.35.1
+
+- Fix `IN` expressions accepting aliases, causing some queries to get parsed
+  incorrectly.
+
+## 0.35.0
+
+- Fix parsing binary literals.
+- Expand support for `IN` expressions, they now support tuples on the left-hand
+  side and the shorthand syntax for table references and table-valued functions.
+- Drift extensions: Allow custom class names for `CREATE VIEW` statements.
+- Drift extensions: Support the `INT64` hint for `CREATE TABLE` statements.
+
+## 0.34.1
+
+- Allow selecting from virtual tables using the table-valued function
+  syntax.
+
+## 0.34.0
+
+- Fix explicit `NULL` column constraints being dropped when converting nodes
+  to SQL.
+- Add analysis errors for illegal unqualified references to `old` and `new` in
+  triggers.
+- Analysis support for sqlite 3.45 and jsonb functions.
+
+## 0.33.0
+
+- Support the [column-name-list](https://sqlite.org/syntax/column-name-list.html)
+  syntax for updates, thanks to [@tibotix](https://github.com/tibotix).
+
+## 0.32.1
+
+- Treat the result of `sum()` as nullable when inferring types.
+- Support features added in sqlite 3.44:
+  - `ORDER BY` clauses as part of aggregate functions.
+  - Support `concat`, `concat_ws` and `string_agg`.
+
+## 0.32.0
+
+- Turn `ResolvedType.hints` into a list, supporting multiple type hints.
+
+## 0.31.3
+
+- Fix star columns expanding to more columns than they should.
+
+## 0.31.2
+
+- Add `CaseInsensitiveMap.of` to wrap existing maps.
+
 ## 0.31.1
 
 - Add the `sqlite3_schema` table to the builtin tables supported by every

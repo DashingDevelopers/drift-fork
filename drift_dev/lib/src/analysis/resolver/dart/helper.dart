@@ -1,3 +1,4 @@
+import 'package:analyzer/dart/analysis/session.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/constant/value.dart';
 import 'package:analyzer/dart/element/element.dart';
@@ -7,7 +8,7 @@ import 'package:analyzer/dart/element/type_provider.dart';
 import 'package:analyzer/dart/element/type_system.dart';
 import 'package:collection/collection.dart';
 
-import '../../driver/driver.dart';
+import '../../backend.dart';
 import '../../driver/error.dart';
 import '../../results/results.dart';
 import '../resolver.dart';
@@ -27,10 +28,12 @@ class KnownDriftTypes {
   final InterfaceType tableInfoType;
   final InterfaceType driftDatabase;
   final InterfaceType driftAccessor;
+  final InterfaceElement userDefinedSqlType;
   final InterfaceElement typeConverter;
   final InterfaceElement jsonTypeConverter;
   final InterfaceType driftAny;
   final InterfaceType uint8List;
+  final InterfaceType geopolyPolygon;
 
   KnownDriftTypes._(
     this.helperLibrary,
@@ -39,12 +42,14 @@ class KnownDriftTypes {
     this.tableIndexType,
     this.viewType,
     this.tableInfoType,
+    this.userDefinedSqlType,
     this.typeConverter,
     this.jsonTypeConverter,
     this.driftDatabase,
     this.driftAccessor,
     this.driftAny,
     this.uint8List,
+    this.geopolyPolygon,
   );
 
   /// Constructs the set of known drift types from a helper library, which is
@@ -62,6 +67,7 @@ class KnownDriftTypes {
       (exportNamespace.get('TableIndex') as InterfaceElement).thisType,
       (exportNamespace.get('View') as InterfaceElement).thisType,
       (exportNamespace.get('TableInfo') as InterfaceElement).thisType,
+      exportNamespace.get('UserDefinedSqlType') as InterfaceElement,
       exportNamespace.get('TypeConverter') as InterfaceElement,
       exportNamespace.get('JsonTypeConverter2') as InterfaceElement,
       dbElement.defaultInstantiation,
@@ -69,6 +75,8 @@ class KnownDriftTypes {
       (exportNamespace.get('DriftAny') as InterfaceElement)
           .defaultInstantiation,
       (exportNamespace.get('Uint8List') as InterfaceElement)
+          .defaultInstantiation,
+      (exportNamespace.get('GeopolyPolygon') as InterfaceElement)
           .defaultInstantiation,
     );
   }
@@ -81,6 +89,10 @@ class KnownDriftTypes {
     return type.asInstanceOf(typeConverter);
   }
 
+  InterfaceType? asUserDefinedType(DartType type) {
+    return type.asInstanceOf(userDefinedSqlType);
+  }
+
   /// Converts the given Dart [type] into an instantiation of the
   /// `JsonTypeConverter` class from drift.
   ///
@@ -91,10 +103,23 @@ class KnownDriftTypes {
     return type?.asInstanceOf(converter);
   }
 
-  static Future<KnownDriftTypes> resolve(DriftAnalysisDriver driver) async {
-    final library = await driver.backend.readDart(uri);
+  bool get isStillConsistent {
+    try {
+      helperLibrary.session.getParsedLibraryByElement(helperLibrary);
+      return true;
+    } on InconsistentAnalysisException {
+      return false;
+    }
+  }
 
-    return KnownDriftTypes._fromLibrary(library);
+  static Future<KnownDriftTypes?> resolve(DriftBackend backend) async {
+    if (backend.canReadDart) {
+      final library = await backend.readDart(uri);
+
+      return KnownDriftTypes._fromLibrary(library);
+    }
+
+    return null;
   }
 
   static final Uri uri = Uri.parse('package:drift/src/drift_dev_helper.dart');
@@ -176,26 +201,28 @@ extension TypeUtils on DartType {
     return $this is InterfaceType ? $this.element.name : null;
   }
 
-  String get userVisibleName => getDisplayString(withNullability: true);
+  String get userVisibleName => getDisplayString();
 
   /// How this type should look like in generated code.
   String codeString() {
     if (nullabilitySuffix == NullabilitySuffix.star) {
       // We can't actually use the legacy star in code, so don't show it.
-      return getDisplayString(withNullability: false);
+      return getDisplayString();
     }
 
-    return getDisplayString(withNullability: true);
+    return getDisplayString();
   }
 }
 
 class DataClassInformation {
-  final String enforcedName;
-  final AnnotatedDartCode? extending;
+  final String? enforcedName;
+  final String? companionName;
+  final CustomParentClass? extending;
   final ExistingRowClass? existingClass;
 
   DataClassInformation(
     this.enforcedName,
+    this.companionName,
     this.extending,
     this.existingClass,
   );
@@ -226,16 +253,15 @@ class DataClassInformation {
       ));
     }
 
-    String name;
-    AnnotatedDartCode? customParentClass;
+    var name = dataClassName?.getField('name')!.toStringValue();
+    final companionName =
+        dataClassName?.getField('companionName')?.toStringValue();
+    CustomParentClass? customParentClass;
     ExistingRowClass? existingClass;
 
     if (dataClassName != null) {
-      name = dataClassName.getField('name')!.toStringValue()!;
       customParentClass =
           parseCustomParentClass(name, dataClassName, element, resolver);
-    } else {
-      name = dataClassNameForClassName(element.name);
     }
 
     if (useRowClass != null) {
@@ -248,7 +274,7 @@ class DataClassInformation {
           useRowClass.getField('constructor')!.toStringValue()!;
       final generateInsertable =
           useRowClass.getField('generateInsertable')!.toBoolValue()!;
-      final helper = await resolver.resolver.driver.loadKnownTypes();
+      final helper = await resolver.resolver.driver.knownTypes;
 
       if (type is InterfaceType) {
         final found = FoundDartClass(type.element, type.typeArguments);
@@ -270,7 +296,12 @@ class DataClassInformation {
       }
     }
 
-    return DataClassInformation(name, customParentClass, existingClass);
+    return DataClassInformation(
+      name,
+      companionName,
+      customParentClass,
+      existingClass,
+    );
   }
 }
 

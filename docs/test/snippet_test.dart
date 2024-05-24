@@ -1,7 +1,9 @@
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
-import 'package:drift_docs/snippets/migrations/datetime_conversion.dart';
+import 'package:drift_docs/snippets/dart_api/datetime_conversion.dart';
+import 'package:drift_docs/snippets/log_interceptor.dart';
 import 'package:drift_docs/snippets/modular/schema_inspection.dart';
+import 'package:sqlite3/sqlite3.dart' show sqlite3;
 import 'package:test/test.dart';
 
 import 'generated/database.dart';
@@ -43,9 +45,10 @@ void main() {
 
     test('text to unix timestamp', () async {
       // First, create all tables using text as datetime
-      final db = Database(DatabaseConnection(NativeDatabase.memory()));
+      final nativeDatabase = sqlite3.openInMemory();
+      var db = Database(DatabaseConnection(NativeDatabase.opened(nativeDatabase,
+          closeUnderlyingOnClose: false)));
       db.options = const DriftDatabaseOptions(storeDateTimeAsText: true);
-      addTearDown(db.close);
 
       final time = DateTime.fromMillisecondsSinceEpoch(
           1000 * (DateTime.now().millisecondsSinceEpoch ~/ 1000));
@@ -55,6 +58,11 @@ void main() {
           UsersCompanion.insert(name: 'name', createdAt: Value(time)));
       await db.users.insertOne(
           UsersCompanion.insert(name: 'name2', createdAt: Value(null)));
+      await db.close();
+
+      db = Database(DatabaseConnection(
+          NativeDatabase.opened(nativeDatabase, closeUnderlyingOnClose: true)));
+      addTearDown(db.close);
 
       // Next, migrate back to unix timestamps
       db.options = const DriftDatabaseOptions(storeDateTimeAsText: false);
@@ -72,10 +80,11 @@ void main() {
     });
 
     test('text to unix timestamp, support old sqlite', () async {
-      // First, create all tables using text as datetime
-      final db = Database(DatabaseConnection(NativeDatabase.memory()));
+      // First, create all tables using datetime as text
+      final nativeDatabase = sqlite3.openInMemory();
+      var db = Database(DatabaseConnection(NativeDatabase.opened(nativeDatabase,
+          closeUnderlyingOnClose: false)));
       db.options = const DriftDatabaseOptions(storeDateTimeAsText: true);
-      addTearDown(db.close);
 
       final time = DateTime.fromMillisecondsSinceEpoch(
           1000 * (DateTime.now().millisecondsSinceEpoch ~/ 1000));
@@ -85,6 +94,11 @@ void main() {
           UsersCompanion.insert(name: 'name', createdAt: Value(time)));
       await db.users.insertOne(
           UsersCompanion.insert(name: 'name2', createdAt: Value(null)));
+      await db.close();
+
+      db = Database(DatabaseConnection(
+          NativeDatabase.opened(nativeDatabase, closeUnderlyingOnClose: true)));
+      addTearDown(db.close);
 
       // Next, migrate back to unix timestamps
       db.options = const DriftDatabaseOptions(storeDateTimeAsText: false);
@@ -116,5 +130,35 @@ void main() {
       final row = await db.users.findById(2).getSingle();
       expect(row.name, 'bar');
     });
+  });
+
+  test('interceptor', () {
+    expect(
+      () async {
+        final db =
+            Database(NativeDatabase.memory().interceptWith(LogInterceptor()));
+
+        await db.batch((batch) {
+          batch.insert(db.users, UsersCompanion.insert(name: 'foo'));
+        });
+
+        await db.users.all().get();
+      },
+      prints(
+        allOf(
+          stringContainsInOrder(
+            [
+              'begin',
+              'Running batch with BatchedStatements',
+              ' => succeeded after ',
+              'Running commit',
+              ' => succeeded after ',
+              'Running SELECT * FROM "users"; with []',
+              ' => succeeded after'
+            ],
+          ),
+        ),
+      ),
+    );
   });
 }

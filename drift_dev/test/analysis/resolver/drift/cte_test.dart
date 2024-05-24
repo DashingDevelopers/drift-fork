@@ -6,7 +6,7 @@ import '../../test_utils.dart';
 
 void main() {
   test('parse nested CTE', () async {
-    final backend = TestBackend.inTest({
+    final backend = await TestBackend.inTest({
       'a|lib/test.drift': '''
 test:
 SELECT
@@ -33,11 +33,12 @@ SELECT
     final resultSet = query.resultSet;
     expect(resultSet.singleColumn, isTrue);
     expect(resultSet.needsOwnClass, isFalse);
-    expect(resultSet.scalarColumns.map((c) => c.sqlType), [DriftSqlType.int]);
+    expect(resultSet.scalarColumns.map((c) => c.sqlType.builtin),
+        [DriftSqlType.int]);
   });
 
   test('recognizes CTE clause', () async {
-    final backend = TestBackend.inTest({
+    final backend = await TestBackend.inTest({
       'a|lib/test.drift': '''
 test:
 WITH RECURSIVE
@@ -64,11 +65,12 @@ WITH RECURSIVE
     expect(resultSet.singleColumn, isTrue);
     expect(resultSet.needsOwnClass, isFalse);
     expect(resultSet.columns.map(resultSet.dartNameFor), ['x']);
-    expect(resultSet.scalarColumns.map((c) => c.sqlType), [DriftSqlType.int]);
+    expect(resultSet.scalarColumns.map((c) => c.sqlType.builtin),
+        [DriftSqlType.int]);
   });
 
   test('finds the underlying table when aliased through CTE', () async {
-    final backend = TestBackend.inTest({
+    final backend = await TestBackend.inTest({
       'a|lib/test.drift': '''
 CREATE TABLE foo (
   id INT NOT NULL PRIMARY KEY AUTOINCREMENT,

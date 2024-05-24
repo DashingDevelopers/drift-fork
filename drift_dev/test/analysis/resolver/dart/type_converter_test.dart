@@ -6,8 +6,8 @@ import '../../test_utils.dart';
 void main() {
   late TestBackend state;
 
-  setUp(() {
-    state = TestBackend({
+  setUp(() async {
+    state = await TestBackend.init({
       'a|lib/json.dart': '''
 import 'package:drift/drift.dart';
 
@@ -17,6 +17,18 @@ JsonTypeConverter<String, String> withJson() => throw 'stub';
 class Users extends Table {
   TextColumn get foo => text().map(withoutJson())();
   TextColumn get bar => text().map(withJson())();
+}
+''',
+      'a|lib/json_nullability.dart': '''
+import 'package:drift/drift.dart';
+
+JsonTypeConverter<Dart, Sql> tc<Dart, Sql>() => throw 'stub';
+
+class Users extends Table {
+  TextColumn get wrongSqlType => text().map(tc<int, int>())();
+  TextColumn get illegalNull => text().map(tc<String, String?>())();
+  TextColumn get illegalNonNull => text().map(tc<String?, String>()).nullable()();
+  TextColumn get implicitlyNullAware => text().map(tc<String, String>()).nullable()();
 }
 ''',
       'a|lib/nullability.dart': '''
@@ -71,6 +83,30 @@ CREATE TABLE users (
     return testWith('package:a/json.dart');
   });
 
+  test('warns about type issues around json converters', () async {
+    final result = await state.driver
+        .fullyAnalyze(Uri.parse('package:a/json_nullability.dart'));
+    final table = result.analyzedElements.whereType<DriftTable>().single;
+
+    expect(
+      result.allErrors,
+      [
+        isDriftError(contains('must accept String')).withSpan('tc<int, int>()'),
+        isDriftError(contains('has a type converter with a nullable SQL type'))
+            .withSpan('tc<String, String?>()'),
+        isDriftError(allOf([
+          contains('This column is nullable'),
+          contains(
+            'Try wrapping the converter in `JsonTypeConverter2.asNullable`',
+          )
+        ])).withSpan('tc<String?, String>()'),
+      ],
+    );
+
+    final implicitlyNullAware = table.columns[3];
+    expect(implicitlyNullAware.typeConverter?.canBeSkippedForNulls, isTrue);
+  });
+
   test('warns about type issues around converters', () async {
     final result = await state.driver
         .fullyAnalyze(Uri.parse('package:a/nullability.dart'));
@@ -82,8 +118,12 @@ CREATE TABLE users (
         isDriftError(contains('must accept String')).withSpan('tc<int, int>()'),
         isDriftError(contains('has a type converter with a nullable SQL type'))
             .withSpan('tc<String, String?>()'),
-        isDriftError(contains('This column is nullable'))
-            .withSpan('tc<String?, String>()'),
+        isDriftError(allOf([
+          contains('This column is nullable'),
+          contains(
+            'Try wrapping the converter in `NullAwareTypeConverter.wrap`',
+          )
+        ])).withSpan('tc<String?, String>()'),
       ],
     );
 

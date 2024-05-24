@@ -47,7 +47,7 @@ final class _TableShape {
       DriftElementWithResultSet e) {
     return {
       for (final column in e.columns)
-        column.nameInDart: (column.nameInSql, column.sqlType),
+        column.nameInDart: (column.nameInSql, column.sqlType.builtin),
     };
   }
 }
@@ -73,6 +73,10 @@ class SchemaVersionWriter {
 
   SchemaVersionWriter(this.versions, this.libraryScope) {
     assert(versions.isSortedBy<num>((element) => element.version));
+  }
+
+  String _nameForSchemaClass(int version) {
+    return 'Schema$version';
   }
 
   /// Since not every column changes in every schema version, we prefer to re-use
@@ -158,9 +162,19 @@ class SchemaVersionWriter {
     });
   }
 
+  String _suffixForElement(DriftSchemaElement element) => switch (element) {
+        DriftTable() => 'Table',
+        DriftView() => 'View',
+        DriftIndex() => 'Index',
+        DriftTrigger() => 'Trigger',
+        _ => throw ArgumentError('Unhandled element type $element'),
+      };
+
   String _writeWithResultSet(
-      DriftElementWithResultSet entity, TextEmitter writer) {
-    final getterName = entity.dbGetterName;
+    String getterName,
+    DriftElementWithResultSet entity,
+    TextEmitter writer,
+  ) {
     final shape = _shapeClass(entity);
     writer
       ..write('late final $shape $getterName = ')
@@ -259,26 +273,27 @@ class SchemaVersionWriter {
     writer.write('attachedDatabase: database,');
     writer.write('), alias: null)');
 
-    return getterName!;
+    return getterName;
   }
 
   String _writeEntity({
     required DriftSchemaElement element,
     required TextEmitter definition,
   }) {
-    String name;
+    final name = definition.parent!.getNonConflictingName(
+      element.dbGetterName!,
+      (name) => name + _suffixForElement(element),
+    );
 
     if (element is DriftElementWithResultSet) {
-      name = _writeWithResultSet(element, definition);
+      _writeWithResultSet(name, element, definition);
     } else if (element is DriftIndex) {
-      name = element.dbGetterName;
       final index = definition.drift('Index');
 
       definition
         ..write('final $index $name = ')
         ..writeln(DatabaseWriter.createIndex(definition.parent!, element));
     } else if (element is DriftTrigger) {
-      name = element.dbGetterName;
       final trigger = definition.drift('Trigger');
 
       definition
@@ -297,7 +312,7 @@ class SchemaVersionWriter {
       text
         ..write('required Future<void> Function(')
         ..writeDriftRef('Migrator')
-        ..write(' m, _S${next.version} schema)')
+        ..write(' m, ${_nameForSchemaClass(next.version)} schema)')
         ..writeln('from${current.version}To${next.version},');
     }
   }
@@ -311,10 +326,21 @@ class SchemaVersionWriter {
     // only need them for versions targeted by migrations.
     for (final version in versions.skip(1)) {
       final versionNo = version.version;
-      final versionClass = '_S$versionNo';
+      final versionClass = _nameForSchemaClass(version.version);
       final versionScope = libraryScope.child();
 
-      // Write an _S<x> class for each schema version x.
+      // Reserve all the names already in use in [VersionedSchema] and its
+      // superclasses. Without this certain table names would cause us to
+      // generate invalid code.
+      versionScope.reserveNames([
+        'database',
+        'entities',
+        'version',
+        'stepByStepHelper',
+        'runMigrationSteps',
+      ]);
+
+      // Write an Schema<x> class for each schema version x.
       versionScope.leaf()
         ..write('final class $versionClass extends ')
         ..writeUriRef(_schemaLibrary, 'VersionedSchema')
@@ -345,7 +371,7 @@ class SchemaVersionWriter {
     // Write a MigrationStepWithVersion factory that takes a callback doing a
     // step for each schema to to the next. We supply a special migrator that
     // only considers entities from that version, as well as a typed reference
-    // to the _S<x> class used to lookup elements.
+    // to the numbered Schema<x> class used to lookup elements.
     final steps = libraryScope.leaf()
       ..writeUriRef(_schemaLibrary, 'MigrationStepWithVersion')
       ..write(' migrationSteps({');
@@ -358,7 +384,8 @@ class SchemaVersionWriter {
     for (final (current, next) in versions.withNext) {
       steps
         ..writeln('case ${current.version}:')
-        ..write('final schema = _S${next.version}(database: database);')
+        ..write(
+            'final schema = ${_nameForSchemaClass(next.version)}(database: database);')
         ..write('final migrator = ')
         ..writeDriftRef('Migrator')
         ..writeln('(database, schema);')

@@ -46,11 +46,11 @@ class AnalysisContextBackend extends DriftBackend {
 
   AnalysisContextBackend(this.context, this.provider);
 
-  static PhysicalDriftDriver createDriver({
+  static Future<PhysicalDriftDriver> createDriver({
     DriftOptions options = const DriftOptions.defaults(),
     ResourceProvider? resourceProvider,
     required String projectDirectory,
-  }) {
+  }) async {
     final underlyingProvider =
         resourceProvider ?? PhysicalResourceProvider.INSTANCE;
     final provider = OverlayResourceProvider(underlyingProvider);
@@ -95,6 +95,9 @@ class AnalysisContextBackend extends DriftBackend {
 
     return Future.value(resourceProvider.getFile(path).readAsStringSync());
   }
+
+  @override
+  bool get canReadDart => true;
 
   @override
   Future<LibraryElement> readDart(Uri uri) async {

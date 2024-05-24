@@ -21,6 +21,7 @@ const Expression<DateTime> currentDate = _DependingOnDateTimeExpression(
       'strftime',
       [Constant('%s'), _currentDateLiteral],
     ),
+    null,
   ),
 );
 
@@ -33,6 +34,7 @@ const Expression<DateTime> currentDateAndTime = _DependingOnDateTimeExpression(
       'strftime',
       [Constant('%s'), _currentTimestampLiteral],
     ),
+    DriftSqlType.dateTime,
   ),
 );
 
@@ -70,7 +72,7 @@ extension DateTimeExpressions on Expression<DateTime> {
   /// ```dart
   ///  Variable(DateTime.now()).modify(DateTimeModifier.localTime()).hour
   /// ```
-  /// {@template}
+  /// {@endtemplate}
   Expression<int> get year => _StrftimeSingleFieldExpression('%Y', this);
 
   /// Extracts the month from `this` datetime expression.
@@ -341,7 +343,7 @@ class _DependingOnDateTimeExpression<D extends Object> extends Expression<D> {
 /// For another explanation of modifiers, see the [sqlite3 docs].
 ///
 /// [sqlite3 docs]: https://sqlite.org/lang_datefunc.html#modifiers
-class DateTimeModifier extends Constant<String> {
+final class DateTimeModifier extends Constant<String> {
   const DateTimeModifier._(super.value);
 
   /// Adds or subtracts [days] calendar days from the date time value.

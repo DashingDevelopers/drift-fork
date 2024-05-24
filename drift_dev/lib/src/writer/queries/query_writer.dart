@@ -2,10 +2,10 @@ import 'package:drift/drift.dart';
 import 'package:recase/recase.dart';
 import 'package:sqlparser/sqlparser.dart' hide ResultColumn;
 
-import '../../analysis/resolver/queries/nested_queries.dart';
-import '../../analysis/results/results.dart';
 import '../../analysis/options.dart';
 import '../../analysis/resolver/queries/explicit_alias_transformer.dart';
+import '../../analysis/resolver/queries/nested_queries.dart';
+import '../../analysis/results/results.dart';
 import '../../utils/string_escaper.dart';
 import '../writer.dart';
 import 'result_set_writer.dart';
@@ -31,6 +31,7 @@ class QueryWriter {
 
   late final ExplicitAliasTransformer _transformer;
   final TextEmitter _emitter;
+
   StringBuffer get _buffer => _emitter.buffer;
 
   DriftOptions get options => scope.writer.options;
@@ -202,10 +203,20 @@ class QueryWriter {
     }
 
     final dartLiteral = asDartLiteral(name);
-    final method = isNullable ? 'readNullable' : 'read';
+
     final rawDartType =
-        _emitter.dartCode(AnnotatedDartCode([dartTypeNames[column.sqlType]!]));
-    var code = 'row.$method<$rawDartType>($dartLiteral)';
+        _emitter.dartCode(_emitter.innerColumnType(column.sqlType));
+    String code;
+
+    switch (column.sqlType) {
+      case ColumnDriftType():
+        final method = isNullable ? 'readNullable' : 'read';
+        code = 'row.$method<$rawDartType>($dartLiteral)';
+      case ColumnCustomType(:final custom):
+        final method = isNullable ? 'readNullableWithType' : 'readWithType';
+        final typeImpl = _emitter.dartCode(custom.expression);
+        code = 'row.$method<$rawDartType>($typeImpl, $dartLiteral)';
+    }
 
     final converter = column.typeConverter;
     if (converter != null) {
@@ -750,6 +761,7 @@ class _ExpandedDeclarationWriter {
 class _ExpandedVariableWriter {
   final SqlQuery query;
   final TextEmitter _emitter;
+
   StringBuffer get _buffer => _emitter.buffer;
 
   _ExpandedVariableWriter(this.query, this._emitter);
@@ -834,37 +846,22 @@ class _ExpandedVariableWriter {
     // Variables without type converters are written as:
     // `Variable<int>(x)`. When there's a type converter, we instead use
     // `Variable<int>(typeConverter.toSql(x))`.
-    // Finally, if we're dealing with a list, we use a collection for to
-    // write all the variables sequentially.
+    // Finally, if we're dealing with a list, we use a collection for to write
+    // all the variables sequentially.
     String constructVar(String dartExpr) {
-      // No longer an array here, we apply a for loop if necessary
-      final type =
-          _emitter.dartCode(_emitter.innerColumnType(element, nullable: false));
-
-      final varType = _emitter.drift('Variable');
-      final buffer = StringBuffer('$varType<$type>(');
       final capture = element.forCaptured;
-
-      final converter = element.typeConverter;
-      if (converter != null) {
-        // Apply the converter.
-        if (element.nullable && converter.canBeSkippedForNulls) {
-          final nullAware = _emitter.drift('NullAwareTypeConverter');
-
-          buffer.write('$nullAware.wrapToSql('
-              '${readConverter(_emitter, element.typeConverter!)}, $dartExpr)');
-        } else {
-          buffer.write(
-              '${readConverter(_emitter, element.typeConverter!)}.toSql($dartExpr)');
-        }
-      } else if (capture != null) {
-        buffer.write('row.read(${asDartLiteral(capture.helperColumn)})');
-      } else {
-        buffer.write(dartExpr);
+      if (capture != null) {
+        dartExpr = ('row.read(${asDartLiteral(capture.helperColumn)})');
       }
 
-      buffer.write(')');
-      return buffer.toString();
+      final code = _emitter.wrapInVariable(
+        element,
+        AnnotatedDartCode.text(dartExpr),
+        // No longer an array here, we apply a for loop below and run this on
+        // individual values only.
+        ignoreArray: true,
+      );
+      return _emitter.dartCode(code);
     }
 
     final name = element.dartParameterName;

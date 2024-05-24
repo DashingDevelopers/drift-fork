@@ -511,7 +511,20 @@ class Parser {
       final not = _matchOne(TokenType.not);
       _matchOne(TokenType.$in);
 
-      final inside = _variableOrNull() ?? _consumeTuple(orSubQuery: true);
+      InExpressionTarget inside;
+      if (_variableOrNull() case var variable?) {
+        inside = variable;
+      } else if (_check(TokenType.leftParen)) {
+        inside = _consumeTuple(orSubQuery: true) as InExpressionTarget;
+      } else {
+        final target = _tableOrSubquery(allowAlias: false);
+        // TableOrSubquery is either a table reference, a table-valued function,
+        // or a Subquery. We don't support subqueries, but they can't be parsed
+        // here because we would have entered the tuple case above.
+        assert(target is! SubQuery);
+        inside = target as InExpressionTarget;
+      }
+
       return InExpression(left: left, inside: inside, not: not)
         ..setSpan(left.first!, _previous);
     }
@@ -922,11 +935,17 @@ class Parser {
     } else if (_matchOne(TokenType.leftParen)) {
       // We have something like "foo(" -> that's a function!
       final parameters = _functionParameters();
+
+      // Aggregate functions can use `ORDER BY` in their argument list.
+      final orderBy = _orderBy();
+
       final rightParen = _consume(
           TokenType.rightParen, 'Expected closing bracket after argument list');
 
-      if (_peek.type == TokenType.filter || _peek.type == TokenType.over) {
-        return _aggregate(first, parameters);
+      if (orderBy != null ||
+          _peek.type == TokenType.filter ||
+          _peek.type == TokenType.over) {
+        return _aggregate(first, parameters, orderBy);
       }
 
       return FunctionExpression(name: first.identifier, parameters: parameters)
@@ -980,7 +999,10 @@ class Parser {
   }
 
   AggregateFunctionInvocation _aggregate(
-      IdentifierToken name, FunctionParameters params) {
+    IdentifierToken name,
+    FunctionParameters params,
+    OrderByBase? orderBy,
+  ) {
     Expression? filter;
 
     // https://www.sqlite.org/syntax/filter.html (it's optional)
@@ -1005,6 +1027,7 @@ class Parser {
       return WindowFunctionInvocation(
         function: name,
         parameters: params,
+        orderBy: orderBy,
         filter: filter,
         windowDefinition: window,
         windowName: windowName,
@@ -1013,14 +1036,17 @@ class Parser {
       return AggregateFunctionInvocation(
         function: name,
         parameters: params,
+        orderBy: orderBy,
         filter: filter,
       )..setSpan(name, _previous);
     }
   }
 
   /// Parses a [Tuple]. If [orSubQuery] is set (defaults to false), a [SubQuery]
-  /// (in brackets) will be accepted as well.
-  Expression _consumeTuple({bool orSubQuery = false}) {
+  /// (in brackets) will be accepted as well. If parsing a [Tuple], [usedAsRowValue] is
+  /// passed into the [Tuple] constructor.
+  Expression _consumeTuple(
+      {bool orSubQuery = false, bool usedAsRowValue = false}) {
     final firstToken =
         _consume(TokenType.leftParen, 'Expected opening parenthesis for tuple');
     final expressions = <Expression>[];
@@ -1038,7 +1064,8 @@ class Parser {
 
       _consume(
           TokenType.rightParen, 'Expected right parenthesis to close tuple');
-      return Tuple(expressions: expressions)..setSpan(firstToken, _previous);
+      return Tuple(expressions: expressions, usedAsRowValue: usedAsRowValue)
+        ..setSpan(firstToken, _previous);
     } else {
       _consume(TokenType.rightParen,
           'Expected right parenthesis to finish subquery');
@@ -1356,18 +1383,18 @@ class Parser {
     return _joinClause(start) ?? start;
   }
 
-  TableOrSubquery _tableOrSubquery() {
+  TableOrSubquery _tableOrSubquery({bool allowAlias = true}) {
     // this is what we're parsing: https://www.sqlite.org/syntax/table-or-subquery.html
     // we currently only support regular tables, table functions and nested
     // selects
-    final tableRef = _tableReferenceOrNull();
+    final tableRef = _tableReferenceOrNull(allowAlias: allowAlias);
     if (tableRef != null) {
       // this is a bit hacky. If the table reference only consists of one
       // identifer and it's followed by a (, it's a table-valued function
       if (tableRef.as == null && _matchOne(TokenType.leftParen)) {
         final params = _functionParameters();
         _consume(TokenType.rightParen, 'Expected closing parenthesis');
-        final alias = _as();
+        final alias = allowAlias ? _as() : null;
 
         return TableValuedFunction(tableRef.tableName, params,
             as: alias?.identifier)
@@ -1381,7 +1408,7 @@ class Parser {
       _consume(TokenType.rightParen,
           'Expected a right bracket to terminate the inner select');
 
-      final alias = _as();
+      final alias = allowAlias ? _as() : null;
       return SelectStatementAsSource(
           statement: innerStmt, as: alias?.identifier)
         ..setSpan(first, _previous);
@@ -1390,9 +1417,11 @@ class Parser {
     _error('Expected a table name or a nested select statement');
   }
 
-  TableReference? _tableReferenceOrNull() {
+  TableReference? _tableReferenceOrNull({bool allowAlias = true}) {
     _suggestHint(const TableNameDescription());
-    if (_check(TokenType.identifier)) return _tableReference();
+    if (_check(TokenType.identifier)) {
+      return _tableReference(allowAlias: allowAlias);
+    }
     return null;
   }
 
@@ -1675,19 +1704,47 @@ class Parser {
     )..setSpan(withClause?.first ?? updateToken, _previous);
   }
 
+  SingleColumnSetComponent _singleColumnSetComponent() {
+    final columnName = _consumeIdentifier('Expected a column name to set');
+    final reference = Reference(columnName: columnName.identifier)
+      ..setSpan(columnName, columnName);
+    _consume(TokenType.equal, 'Expected = after the column name');
+    final expr = expression();
+
+    return SingleColumnSetComponent(column: reference, expression: expr)
+      ..setSpan(columnName, _previous);
+  }
+
+  MultiColumnSetComponent _multiColumnSetComponent() {
+    final first = _consume(
+        TokenType.leftParen, 'Expected opening parenthesis before column list');
+
+    final targetColumns = <Reference>[];
+    do {
+      final columnName = _consumeIdentifier('Expected a column');
+      targetColumns.add(Reference(columnName: columnName.identifier)
+        ..setSpan(columnName, columnName));
+    } while (_matchOne(TokenType.comma));
+
+    _consume(
+        TokenType.rightParen, 'Expected closing parenthesis after column list');
+    _consume(TokenType.equal, 'Expected = after the column name list');
+    final tupleOrSubQuery =
+        _consumeTuple(orSubQuery: true, usedAsRowValue: true);
+
+    return MultiColumnSetComponent(
+        columns: targetColumns, rowValue: tupleOrSubQuery)
+      ..setSpan(first, _previous);
+  }
+
   List<SetComponent> _setComponents() {
     final set = <SetComponent>[];
     do {
-      final columnName =
-          _consume(TokenType.identifier, 'Expected a column name to set')
-              as IdentifierToken;
-      final reference = Reference(columnName: columnName.identifier)
-        ..setSpan(columnName, columnName);
-      _consume(TokenType.equal, 'Expected = after the column name');
-      final expr = expression();
-
-      set.add(SetComponent(column: reference, expression: expr)
-        ..setSpan(columnName, _previous));
+      if (_check(TokenType.leftParen)) {
+        set.add(_multiColumnSetComponent());
+      } else {
+        set.add(_singleColumnSetComponent());
+      }
     } while (_matchOne(TokenType.comma));
 
     return set;
@@ -1736,7 +1793,7 @@ class Parser {
       } while (_matchOne(TokenType.comma));
 
       _consume(TokenType.rightParen,
-          'Expected clpsing parenthesis after column list');
+          'Expected closing parenthesis after column list');
     }
     final source = _insertSource();
     final upsert = <UpsertClauseEntry>[];
@@ -2252,25 +2309,28 @@ class Parser {
         supportAs ? const [TokenType.as, TokenType.$with] : [TokenType.$with];
 
     if (enableDriftExtensions && (_match(types))) {
-      final first = _previous;
-      final useExisting = _previous.type == TokenType.$with;
-      final name =
-          _consumeIdentifier('Expected the name for the data class').identifier;
-      String? constructorName;
-
-      if (_matchOne(TokenType.dot)) {
-        constructorName = _consumeIdentifier(
-                'Expected name of the constructor to use after the dot')
-            .identifier;
-      }
-
-      return DriftTableName(
-        useExistingDartClass: useExisting,
-        overriddenDataClassName: name,
-        constructorName: constructorName,
-      )..setSpan(first, _previous);
+      return _startedDriftTableName(_previous);
     }
     return null;
+  }
+
+  DriftTableName _startedDriftTableName(Token first) {
+    final useExisting = _previous.type == TokenType.$with;
+    final name =
+        _consumeIdentifier('Expected the name for the data class').identifier;
+    String? constructorName;
+
+    if (_matchOne(TokenType.dot)) {
+      constructorName = _consumeIdentifier(
+              'Expected name of the constructor to use after the dot')
+          .identifier;
+    }
+
+    return DriftTableName(
+      useExistingDartClass: useExisting,
+      overriddenDataClassName: name,
+      constructorName: constructorName,
+    )..setSpan(first, _previous);
   }
 
   /// Parses a "CREATE TRIGGER" statement, assuming that the create token has
@@ -2367,17 +2427,33 @@ class Parser {
     final ifNotExists = _ifNotExists();
     final name = _consumeIdentifier('Expected a name for this view');
 
-    // Don't allow the "AS ClassName" syntax for views since it causes an
-    // ambiguity with the regular view syntax.
-    final driftTableName = _driftTableName(supportAs: false);
+    DriftTableName? driftTableName;
+    var skippedToSelect = false;
 
-    List<String>? columnNames;
-    if (_matchOne(TokenType.leftParen)) {
-      columnNames = _columnNames();
-      _consume(TokenType.rightParen, 'Expected closing bracket');
+    if (enableDriftExtensions) {
+      if (_check(TokenType.$with)) {
+        driftTableName = _driftTableName();
+      } else if (_matchOne(TokenType.as)) {
+        // This can either be a data class name or the beginning of the select
+        if (_check(TokenType.identifier)) {
+          // It's a data class name
+          driftTableName = _startedDriftTableName(_previous);
+        } else {
+          // No, we'll expect the SELECT next.
+          skippedToSelect = true;
+        }
+      }
     }
 
-    _consume(TokenType.as, 'Expected AS SELECT');
+    List<String>? columnNames;
+    if (!skippedToSelect) {
+      if (_matchOne(TokenType.leftParen)) {
+        columnNames = _columnNames();
+        _consume(TokenType.rightParen, 'Expected closing bracket');
+      }
+
+      _consume(TokenType.as, 'Expected AS SELECT');
+    }
 
     final query = _fullSelect();
     if (query == null) {
@@ -2496,6 +2572,10 @@ class Parser {
   }
 
   List<Token>? _typeName() {
+    if (enableDriftExtensions && _matchOne(TokenType.inlineDart)) {
+      return [_previous];
+    }
+
     // sqlite doesn't really define what a type name is and has very loose rules
     // at turning them into a type affinity. We support this pattern:
     // typename = identifier [ "(" { identifier | comma | number_literal } ")" ]

@@ -2,11 +2,11 @@ import 'package:collection/collection.dart';
 import 'package:drift/drift.dart' show DriftSqlType;
 import 'package:sqlparser/sqlparser.dart' as sql;
 
-import 'dart.dart';
 import 'element.dart';
 
 import 'column.dart';
 import 'result_sets.dart';
+import 'types.dart';
 
 class DriftTable extends DriftElementWithResultSet {
   @override
@@ -21,7 +21,7 @@ class DriftTable extends DriftElementWithResultSet {
   final ExistingRowClass? existingRowClass;
 
   @override
-  final AnnotatedDartCode? customParentClass;
+  final CustomParentClass? customParentClass;
 
   /// The fixed [entityInfoName] to use, overriding the default.
   final String? fixedEntityInfoName;
@@ -31,6 +31,9 @@ class DriftTable extends DriftElementWithResultSet {
 
   @override
   final String nameOfRowClass;
+
+  @override
+  final String? nameOfCompanionClass;
 
   final bool withoutRowId;
 
@@ -69,6 +72,7 @@ class DriftTable extends DriftElementWithResultSet {
     required this.columns,
     required this.baseDartName,
     required this.nameOfRowClass,
+    this.nameOfCompanionClass,
     this.references = const [],
     this.existingRowClass,
     this.customParentClass,
@@ -82,7 +86,7 @@ class DriftTable extends DriftElementWithResultSet {
     this.attachedIndices = const [],
   }) {
     _rowIdColumn = DriftColumn(
-      sqlType: DriftSqlType.int,
+      sqlType: ColumnType.drift(DriftSqlType.int),
       nullable: false,
       nameInSql: 'rowid',
       nameInDart: 'rowid',
@@ -126,8 +130,9 @@ class DriftTable extends DriftElementWithResultSet {
     final primaryKey = fullPrimaryKey;
     if (primaryKey.length == 1) {
       final column = primaryKey.single;
-      if (column.sqlType == DriftSqlType.int ||
-          column.sqlType == DriftSqlType.bigInt) {
+      final builtinType = column.sqlType.builtin;
+      if (builtinType == DriftSqlType.int ||
+          builtinType == DriftSqlType.bigInt) {
         // So this column is an alias for the rowid
         return column;
       }

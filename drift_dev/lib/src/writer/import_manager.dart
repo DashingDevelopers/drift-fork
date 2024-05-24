@@ -1,3 +1,4 @@
+import 'package:analyzer/dart/element/element.dart';
 import 'package:path/path.dart' show url;
 
 import '../utils/string_escaper.dart';
@@ -8,9 +9,65 @@ abstract class ImportManager {
 }
 
 class ImportManagerForPartFiles extends ImportManager {
+  final LibraryElement mainLibrary;
+  final Map<String, Map<String, Element>> _namedImports = {};
+
+  ImportManagerForPartFiles(this.mainLibrary) {
+    for (final import in mainLibrary.libraryImports) {
+      if (import.prefix case ImportElementPrefix prefix) {
+        // Not using import.namespace here because that contains the prefix
+        // everywhere. We want to look up the prefix from the raw name.
+        final library = import.importedLibrary;
+        if (library != null) {
+          _namedImports[prefix.element.name] =
+              library.exportNamespace.definedNames;
+        }
+      }
+    }
+  }
+
   @override
   String? prefixFor(Uri definitionUri, String elementName) {
-    return null; // todo: Find import alias from existing imports?
+    // Part files can't add their own imports, so try to find the element in an
+    // existing import.
+    for (final MapEntry(:key, :value) in _namedImports.entries) {
+      final foundHere = value[elementName];
+      if (foundHere != null && _matchingUrl(definitionUri, foundHere)) {
+        return key;
+      }
+    }
+
+    return null;
+  }
+
+  /// Heuristic to determine whether a source uri [wanted] likely exports the
+  /// [target] element.
+  ///
+  /// We can't compare the [target] definition with the [wanted] url directly,
+  /// as many parts use URLs relying on re-exports. For instance, this should
+  /// return true for a wanted URI of `package:drift/drift.dart` when the
+  /// element is actually defined in `package:drift/src/runtime/table.dart`.
+  static bool _matchingUrl(Uri wanted, Element target) {
+    final targetUri = target.librarySource?.uri;
+    if (targetUri == null || targetUri.scheme != wanted.scheme) {
+      return false;
+    }
+
+    if (targetUri.scheme == 'package') {
+      // Match if the two elements are coming from the same package
+      final targetPackage = targetUri.pathSegments.first;
+      final wantedPackage = wanted.pathSegments.first;
+      return targetPackage == wantedPackage;
+    }
+
+    return true;
+  }
+}
+
+class NullImportManager extends ImportManager {
+  @override
+  String? prefixFor(Uri definitionUri, String elementName) {
+    return null;
   }
 }
 

@@ -145,7 +145,9 @@ class DriftProtocol {
 
         result.add(rows.length);
         for (final row in rows) {
-          result.addAll(row.values);
+          for (final value in row.values) {
+            result.add(_encodeDbValue(value));
+          }
         }
         return result;
       }
@@ -191,7 +193,7 @@ class DriftProtocol {
               list[0] as int, list.skip(1).toList()));
         }
 
-        final executorId = fullMessage.last as int;
+        final executorId = fullMessage.last as int?;
         return ExecuteBatchedStatement(
             BatchedStatements(sql, args), executorId);
       case _tag_RunTransactionAction:
@@ -234,7 +236,7 @@ class DriftProtocol {
 
           result.add({
             for (var c = 0; c < columnCount; c++)
-              columns[c]: fullMessage[rowOffset + c]
+              columns[c]: _decodeDbValue(fullMessage[rowOffset + c])
           });
         }
         return SelectResult(result);

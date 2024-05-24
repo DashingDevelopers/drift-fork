@@ -5,6 +5,19 @@ import 'element.dart';
 import 'column.dart';
 import 'dart.dart';
 
+/// Drift allows specifying a base class which the generated row class will then
+/// extend. This class describes the specified parent class along with
+/// additional information needed for code generation.
+class CustomParentClass {
+  final AnnotatedDartCode parentClass;
+  final bool isConst;
+
+  CustomParentClass({
+    required this.parentClass,
+    required this.isConst,
+  });
+}
+
 abstract class DriftElementWithResultSet extends DriftSchemaElement {
   /// The columns declared in this table or view.
   List<DriftColumn> get columns;
@@ -18,7 +31,7 @@ abstract class DriftElementWithResultSet extends DriftSchemaElement {
   ExistingRowClass? get existingRowClass;
 
   /// Class that added to data class as implementation
-  AnnotatedDartCode? get customParentClass;
+  CustomParentClass? get customParentClass;
 
   /// Whether this table has an existing row class, meaning that drift will not
   /// generate one on its own.
@@ -26,6 +39,13 @@ abstract class DriftElementWithResultSet extends DriftSchemaElement {
 
   /// The name for the data class associated with this table or view.
   String get nameOfRowClass;
+
+  /// The name for the companion class associated with this table or view.
+  String? get nameOfCompanionClass;
+
+  /// The name of the mixin generated when `write_to_columns_mixins` is `true` in `build.yaml`.<br/>
+  /// See documentation for [Generation options](https://drift.simonbinder.eu/docs/advanced-features/builder_options/).
+  String get toColumnsMixin => '${entityInfoName}ToColumns';
 
   /// All [columns] of this table, indexed by their name in SQL.
   late final Map<String, DriftColumn> columnBySqlName = CaseInsensitiveMap.of({

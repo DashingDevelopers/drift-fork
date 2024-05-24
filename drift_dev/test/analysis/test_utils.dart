@@ -37,24 +37,42 @@ class TestBackend extends DriftBackend {
   AnalysisContext? _dartContext;
   OverlayResourceProvider? _resourceProvider;
 
-  TestBackend(
+  TestBackend._(
     Map<String, String> sourceContents, {
     DriftOptions options = const DriftOptions.defaults(),
     this.analyzerExperiments = const Iterable.empty(),
   }) : sourceContents = {
           for (final entry in sourceContents.entries)
             AssetId.parse(entry.key).uri.toString(): entry.value,
-        } {
-    driver = DriftAnalysisDriver(this, options, isTesting: true);
-  }
+        };
 
-  factory TestBackend.inTest(
+  static Future<TestBackend> init(
     Map<String, String> sourceContents, {
     DriftOptions options = const DriftOptions.defaults(),
     Iterable<String> analyzerExperiments = const Iterable.empty(),
-  }) {
-    final backend = TestBackend(sourceContents,
-        options: options, analyzerExperiments: analyzerExperiments);
+  }) async {
+    final backend = TestBackend._(
+      sourceContents,
+      options: options,
+      analyzerExperiments: analyzerExperiments,
+    );
+
+    backend.driver = DriftAnalysisDriver(backend, options, isTesting: true);
+
+    return backend;
+  }
+
+  static Future<TestBackend> inTest(
+    Map<String, String> sourceContents, {
+    DriftOptions options = const DriftOptions.defaults(),
+    Iterable<String> analyzerExperiments = const Iterable.empty(),
+  }) async {
+    final backend = await TestBackend.init(
+      sourceContents,
+      options: options,
+      analyzerExperiments: analyzerExperiments,
+    );
+
     addTearDown(backend.dispose);
 
     return backend;
@@ -62,9 +80,10 @@ class TestBackend extends DriftBackend {
 
   static Future<FileState> analyzeSingle(String content,
       {String asset = 'a|lib/a.drift',
-      DriftOptions options = const DriftOptions.defaults()}) {
+      DriftOptions options = const DriftOptions.defaults()}) async {
     final assetId = AssetId.parse(asset);
-    final backend = TestBackend.inTest({asset: content}, options: options);
+    final backend =
+        await TestBackend.inTest({asset: content}, options: options);
     return backend.driver.fullyAnalyze(assetId.uri);
   }
 
@@ -97,7 +116,12 @@ class TestBackend extends DriftBackend {
         PackageConfig.parseBytes(await File.fromUri(uri!).readAsBytes(), uri);
     final testConfig = PackageConfig([
       ...hostConfig.packages,
-      Package('a', Uri.directory('/a/'), packageUriRoot: Uri.parse('lib/')),
+      Package(
+        'a',
+        Uri.directory('/a/'),
+        packageUriRoot: Uri.parse('lib/'),
+        languageVersion: LanguageVersion(3, 3),
+      ),
     ]);
 
     // Write package config used to analyze dummy sources
@@ -157,9 +181,9 @@ class TestBackend extends DriftBackend {
       fileContents.writeln("import '$import';");
     }
     fileContents.writeln('var field = $dartExpression;');
-    final path = '${_pathFor(context)}.exp.dart';
+    final path = '${_pathFor(context)}.exp${dartExpression.hashCode}.dart';
 
-    await _setupDartAnalyzer();
+    await ensureHasDartAnalyzer();
     final resourceProvider = _resourceProvider!;
     final analysisContext = _dartContext!;
 
@@ -194,7 +218,7 @@ class TestBackend extends DriftBackend {
 
     final path = '${_pathFor(context)}.imports.dart';
 
-    await _setupDartAnalyzer();
+    await ensureHasDartAnalyzer();
 
     final resourceProvider = _resourceProvider!;
     final analysisContext = _dartContext!;
@@ -216,6 +240,9 @@ class TestBackend extends DriftBackend {
 
     return null;
   }
+
+  @override
+  bool get canReadDart => true;
 
   @override
   Future<LibraryElement> readDart(Uri uri) async {
@@ -279,7 +306,8 @@ class _HasInferredColumnTypes extends CustomMatcher {
 
     final resultSet = actual.resultSet;
     return {
-      for (final column in resultSet.scalarColumns) column.name: column.sqlType
+      for (final column in resultSet.scalarColumns)
+        column.name: column.sqlType.builtin
     };
   }
 }

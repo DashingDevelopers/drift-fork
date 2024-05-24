@@ -9,7 +9,7 @@ import 'utils.dart';
 
 void main() {
   test('respects explicit type arguments', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'foo|lib/main.drift': '''
 bar(?1 AS TEXT, :foo AS BOOLEAN): SELECT ?, :foo;
       ''',
@@ -24,12 +24,12 @@ bar(?1 AS TEXT, :foo AS BOOLEAN): SELECT ?, :foo;
     final resultSet = (query as SqlSelectQuery).resultSet;
     expect(resultSet.matchingTable, isNull);
     expect(resultSet.scalarColumns.map((c) => c.name), ['?', ':foo']);
-    expect(resultSet.scalarColumns.map((c) => c.sqlType),
+    expect(resultSet.scalarColumns.map((c) => c.sqlType.builtin),
         [DriftSqlType.string, DriftSqlType.bool]);
   });
 
   test('can read from builtin tables', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'a|lib/main.drift': '''
 testQuery: SELECT * FROM sqlite_schema;
       ''',
@@ -43,7 +43,7 @@ testQuery: SELECT * FROM sqlite_schema;
   });
 
   test('reads REQUIRED syntax', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'foo|lib/main.drift': '''
 bar(REQUIRED ?1 AS TEXT OR NULL, REQUIRED :foo AS BOOLEAN): SELECT ?, :foo;
       ''',
@@ -64,7 +64,7 @@ bar(REQUIRED ?1 AS TEXT OR NULL, REQUIRED :foo AS BOOLEAN): SELECT ?, :foo;
   });
 
   test('infers result set for views', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'foo|lib/main.drift': r'''
 CREATE VIEW my_view AS SELECT 'foo', 2;
 
@@ -90,7 +90,7 @@ query: SELECT * FROM my_view;
   });
 
   test('infers nested result set for views', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'foo|lib/main.drift': r'''
 CREATE VIEW my_view AS SELECT 'foo', 2;
 
@@ -123,7 +123,7 @@ query: SELECT foo.**, bar.** FROM my_view foo, my_view bar;
   });
 
   test('infers nested result sets for custom result sets', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'foo|lib/main.drift': r'''
 query: SELECT 1 AS a, b.** FROM (SELECT 2 AS b, 3 AS c) AS b;
       ''',
@@ -154,7 +154,7 @@ query: SELECT 1 AS a, b.** FROM (SELECT 2 AS b, 3 AS c) AS b;
 
   for (final dateTimeAsText in [false, true]) {
     test('analyzing date times (stored as text: $dateTimeAsText)', () async {
-      final state = TestBackend.inTest(
+      final state = await TestBackend.inTest(
         {
           'foo|lib/foo.drift': r'''
 CREATE TABLE foo (
@@ -181,25 +181,28 @@ q3: SELECT datetime('now');
       expect(queries, hasLength(3));
 
       final q1 = queries[0];
-      expect(q1.resultSet!.scalarColumns.single.sqlType, DriftSqlType.dateTime);
+      expect(q1.resultSet!.scalarColumns.single.sqlType.builtin,
+          DriftSqlType.dateTime);
 
       final q2 = queries[1];
       final q3 = queries[2];
 
       if (dateTimeAsText) {
-        expect(q2.resultSet!.scalarColumns.single.sqlType, DriftSqlType.int);
-        expect(
-            q3.resultSet!.scalarColumns.single.sqlType, DriftSqlType.dateTime);
+        expect(q2.resultSet!.scalarColumns.single.sqlType.builtin,
+            DriftSqlType.int);
+        expect(q3.resultSet!.scalarColumns.single.sqlType.builtin,
+            DriftSqlType.dateTime);
       } else {
-        expect(
-            q2.resultSet!.scalarColumns.single.sqlType, DriftSqlType.dateTime);
-        expect(q3.resultSet!.scalarColumns.single.sqlType, DriftSqlType.string);
+        expect(q2.resultSet!.scalarColumns.single.sqlType.builtin,
+            DriftSqlType.dateTime);
+        expect(q3.resultSet!.scalarColumns.single.sqlType.builtin,
+            DriftSqlType.string);
       }
     });
   }
 
   test('resolves nested result sets', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'foo|lib/main.drift': r'''
 CREATE TABLE points (
   id INTEGER NOT NULL PRIMARY KEY,
@@ -240,7 +243,7 @@ FROM routes
   });
 
   test('resolves nullability of aliases in nested result sets', () async {
-    final state = TestBackend.inTest({
+    final state = await TestBackend.inTest({
       'foo|lib/main.drift': r'''
 CREATE TABLE tableA1 (id INTEGER);
 CREATE TABLE tableB1 (id INTEGER);
@@ -282,7 +285,7 @@ LEFT JOIN tableB1 AS tableB2 -- nullable
 
   test('supports custom functions', () async {
     final withoutOptions =
-        TestBackend.inTest({'a|lib/a.drift': 'a: SELECT my_function();'});
+        await TestBackend.inTest({'a|lib/a.drift': 'a: SELECT my_function();'});
     var result = await withoutOptions.analyze('package:a/a.drift');
     expect(result.allErrors, [
       isDriftError('Function my_function could not be found')
@@ -291,14 +294,13 @@ LEFT JOIN tableB1 AS tableB2 -- nullable
           .withSpan('my_function()'),
     ]);
 
-    final withOptions =
-        TestBackend.inTest({'a|lib/a.drift': 'a: SELECT my_function(?, ?);'},
-            options: DriftOptions.defaults(
-              sqliteAnalysisOptions: SqliteAnalysisOptions(knownFunctions: {
-                'my_function':
-                    KnownSqliteFunction.fromJson('boolean (int, text)')
-              }),
-            ));
+    final withOptions = await TestBackend.inTest(
+        {'a|lib/a.drift': 'a: SELECT my_function(?, ?);'},
+        options: DriftOptions.defaults(
+          sqliteAnalysisOptions: SqliteAnalysisOptions(knownFunctions: {
+            'my_function': KnownSqliteFunction.fromJson('boolean (int, text)')
+          }),
+        ));
     result = await withOptions.analyze('package:a/a.drift');
 
     withOptions.expectNoErrors();
@@ -306,15 +308,16 @@ LEFT JOIN tableB1 AS tableB2 -- nullable
     final query = result.fileAnalysis!.resolvedQueries.values.single;
     expect(query.resultSet!.columns, [
       isA<ScalarResultColumn>()
-          .having((e) => e.sqlType, 'sqlType', DriftSqlType.bool)
+          .having((e) => e.sqlType.builtin, 'sqlType', DriftSqlType.bool)
     ]);
 
     final args = query.variables;
-    expect(args.map((e) => e.sqlType), [DriftSqlType.int, DriftSqlType.string]);
+    expect(args.map((e) => e.sqlType.builtin),
+        [DriftSqlType.int, DriftSqlType.string]);
   });
 
   test('can cast to DATETIME and BOOLEAN', () async {
-    final backend = TestBackend.inTest({
+    final backend = await TestBackend.inTest({
       'a|lib/a.drift': '''
 a: SELECT CAST(1 AS BOOLEAN) AS a, CAST(2 AS DATETIME) as b;
 ''',
@@ -325,14 +328,15 @@ a: SELECT CAST(1 AS BOOLEAN) AS a, CAST(2 AS DATETIME) as b;
     final resultSet = query.resultSet!;
 
     expect(resultSet.columns, [
-      scalarColumn('a').having((e) => e.sqlType, 'sqlType', DriftSqlType.bool),
+      scalarColumn('a')
+          .having((e) => e.sqlType.builtin, 'sqlType', DriftSqlType.bool),
       scalarColumn('b')
-          .having((e) => e.sqlType, 'sqlType', DriftSqlType.dateTime),
+          .having((e) => e.sqlType.builtin, 'sqlType', DriftSqlType.dateTime),
     ]);
   });
 
   test('can cast to enum type', () async {
-    final backend = TestBackend.inTest({
+    final backend = await TestBackend.inTest({
       'a|lib/a.drift': '''
 import 'enum.dart';
 

@@ -56,7 +56,9 @@ targets:
               version: "3.39"
         generate_for:
           include: &modular
+            - "lib/snippets/_shared/**"
             - "lib/snippets/modular/**"
+            - "lib/snippets/drift_files/custom_queries.*"
       drift_dev:modular:
         enabled: true
         options: *options
@@ -120,6 +122,8 @@ targets:
           environment: "preview"
       build_web_compilers:entrypoint:
         generate_for:
+          include:
+            - "web/**"
           exclude:
             - "web/drift_worker.dart"
         release_options:
@@ -156,7 +160,7 @@ targets:
 global_options:
   ":api_index":
     options:
-      packages: ['drift', 'drift_dev', 'sqlite3']
+      packages: ['drift', 'drift_dev', 'sqlite3', 'sqlite3_flutter_libs', 'sqlcipher_flutter_libs']
 
 additional_public_assets:
   - "pages/**"

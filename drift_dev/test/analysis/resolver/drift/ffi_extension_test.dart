@@ -84,7 +84,7 @@ void main() {
 
   test('integration tests with drift files and experimental inference',
       () async {
-    final state = TestBackend.inTest(
+    final state = await TestBackend.inTest(
       const {
         'foo|lib/a.drift': '''
 CREATE TABLE numbers (foo REAL NOT NULL);
@@ -108,7 +108,7 @@ wrongArgs: SELECT sin(oid, foo) FROM numbers;
     expect(
       queryInA.resultSet.scalarColumns.single,
       const TypeMatcher<ScalarResultColumn>()
-          .having((e) => e.sqlType, 'type', DriftSqlType.double),
+          .having((e) => e.sqlType.builtin, 'type', DriftSqlType.double),
     );
 
     final fileB = await state.analyze('package:foo/b.drift');

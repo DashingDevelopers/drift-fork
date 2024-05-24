@@ -7,6 +7,14 @@ library;
 import 'dart:async';
 
 import 'package:drift/drift.dart';
+import 'package:sqlite3/common.dart';
+
+/// Signature of a function that can perform setup work on a [database] before
+/// drift is fully ready.
+///
+/// This could be used to, for instance, register custom user-defined functions
+/// on the database.
+typedef WasmDatabaseSetup = void Function(CommonDatabase database);
 
 /// The storage implementation used by the `drift` and `sqlite3` packages to
 /// emulate a synchronous file system on the web, used by the sqlite3 C library
@@ -49,7 +57,7 @@ enum WasmStorageImplementation {
   /// implementation.
   ///
   /// While being less efficient than [opfsShared], this mode is also very
-  /// reliably and used by the official WASM builds of the sqlite3 project as
+  /// reliable and used by the official WASM builds of the sqlite3 project as
   /// well.
   ///
   /// It requires [cross-origin isolation], which needs to be enabled by serving
@@ -172,10 +180,14 @@ abstract interface class WasmProbeResult {
   ///
   /// When this database doesn't exist, [initializeDatabase] is invoked to
   /// optionally return the initial bytes of the database.
+  /// When [enableMigrations] is set to `false`, drift will not check the
+  /// `user_version` pragma when opening the database or run migrations.
   Future<DatabaseConnection> open(
     WasmStorageImplementation implementation,
     String name, {
     FutureOr<Uint8List?> Function()? initializeDatabase,
+    WasmDatabaseSetup? localSetup,
+    bool enableMigrations = true,
   });
 
   /// Deletes an [ExistingDatabase] from storage.

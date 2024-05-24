@@ -54,7 +54,7 @@ class GeneratedColumn<T extends Object> extends Column<T> {
   final VerificationResult Function(T?, VerificationMeta)? additionalChecks;
 
   /// The sql type to use for this column.
-  final DriftSqlType<T> type;
+  final BaseSqlType<T> type;
 
   /// If this column is generated (that is, it is a SQL expression of other)
   /// columns, contains information about how to generate this column.
@@ -69,6 +69,9 @@ class GeneratedColumn<T extends Object> extends Column<T> {
 
   @override
   String get name => $name;
+
+  @override
+  BaseSqlType<T> get driftSqlType => type;
 
   /// Used by generated code.
   GeneratedColumn(
@@ -159,7 +162,7 @@ class GeneratedColumn<T extends Object> extends Column<T> {
 
       // these custom constraints refer to builtin constraints from drift
       if (!isSerial && _defaultConstraints != null) {
-        _defaultConstraints!(into);
+        _defaultConstraints(into);
       }
     } else if ($customConstraints?.isNotEmpty == true) {
       into.buffer
@@ -224,7 +227,7 @@ class GeneratedColumn<T extends Object> extends Column<T> {
   }
 
   Variable _evaluateClientDefault() {
-    return Variable<T>(clientDefault!());
+    return variable(clientDefault!());
   }
 
   /// A value for [additionalChecks] validating allowed text lengths.
@@ -294,7 +297,7 @@ class GeneratedColumnWithTypeConverter<D, S extends Object>
     String tableName,
     bool nullable,
     S? Function()? clientDefault,
-    DriftSqlType<S> type,
+    BaseSqlType<S> type,
     void Function(GenerationContext)? defaultConstraints,
     String? customConstraints,
     Expression<S>? defaultValue,

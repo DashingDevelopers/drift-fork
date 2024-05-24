@@ -118,6 +118,7 @@ abstract class SqlQuery {
   final String name;
 
   AnalysisContext? get fromContext;
+
   AstNode? get root;
 
   /// Whether this query was declared in a `.drift` file.
@@ -474,6 +475,7 @@ class InferredResultSet {
   });
 
   Iterable<ScalarResultColumn> get scalarColumns => columns.whereType();
+
   Iterable<NestedResult> get nestedResults => columns.whereType();
 
   /// Whether a new class needs to be written to store the result of this query.
@@ -722,7 +724,7 @@ final class ScalarResultColumn extends ResultColumn
     implements HasType, ArgumentForQueryRowType {
   final String name;
   @override
-  final DriftSqlType sqlType;
+  final ColumnType sqlType;
   @override
   final bool nullable;
 
@@ -746,19 +748,46 @@ final class ScalarResultColumn extends ResultColumn
     return dartNameForSqlColumn(name, existingNames: existingNames);
   }
 
+  int get _columnTypeCompatibilityHash {
+    final custom = switch (sqlType) {
+      ColumnDriftType() => null,
+      ColumnCustomType(:final custom) => custom,
+    };
+
+    return Object.hash(sqlType.builtin, custom?.dartType);
+  }
+
   @override
   int get compatibilityHashCode {
-    return Object.hash(
-        ScalarResultColumn, name, sqlType, nullable, typeConverter);
+    return Object.hash(ScalarResultColumn, name, _columnTypeCompatibilityHash,
+        nullable, typeConverter);
   }
 
   @override
   bool isCompatibleTo(ResultColumn other) {
-    return other is ScalarResultColumn &&
+    if (other is ScalarResultColumn &&
         other.name == name &&
-        other.sqlType == sqlType &&
+        other.sqlType.builtin == sqlType.builtin &&
         other.nullable == nullable &&
-        other.typeConverter == typeConverter;
+        other.typeConverter == typeConverter) {
+      // ok
+    } else {
+      return false;
+    }
+
+    switch ((sqlType, other.sqlType)) {
+      case (
+          ColumnCustomType(:final custom),
+          ColumnCustomType(custom: final otherCustom)
+        ):
+        if (custom.dartType != otherCustom.dartType) {
+          return false;
+        }
+      case _:
+        break;
+    }
+
+    return true;
   }
 }
 
@@ -924,7 +953,7 @@ class FoundVariable extends FoundElement implements HasType {
 
   /// The (inferred) type for this variable.
   @override
-  final DriftSqlType sqlType;
+  final ColumnType sqlType;
 
   /// The type converter to apply before writing this value.
   @override
@@ -1014,7 +1043,7 @@ class SimpleDartPlaceholderType extends DartPlaceholderType {
 
 class ExpressionDartPlaceholderType extends DartPlaceholderType {
   /// The sql type of this expression.
-  final DriftSqlType? columnType;
+  final ColumnType? columnType;
   final Expression? defaultValue;
 
   ExpressionDartPlaceholderType(this.columnType, this.defaultValue);

@@ -1,59 +1,113 @@
 // ignore_for_file: public_member_api_docs
 
-import 'dart:html';
-import 'dart:js';
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
-import 'package:js/js_util.dart';
+import 'package:web/web.dart' hide WorkerOptions;
 import 'package:sqlite3/wasm.dart';
 
 import 'types.dart';
 
-typedef PostMessage = void Function(Object? msg, [List<Object>? transfer]);
+enum ProtocolVersion {
+  /// The protocol version used for drift versions up to 2.14 - these don't have
+  /// a version marker anywhere.
+  legacy(0),
+
+  /// This version makes workers report their supported protocol version.
+  ///
+  /// When both the client and the involved worker support this version, an
+  /// explicit close notification is sent from clients to workers when closing
+  /// databases. This allows workers to release resources more efficiently.
+  v1(1),
+
+  /// This version adds the `enableMigrations` field to [ServeDriftDatabase],
+  /// controlling whether the worker server should implement migrations.
+  v2(2);
+
+  final int versionCode;
+
+  const ProtocolVersion(this.versionCode);
+
+  static const current = v2;
+
+  void writeToJs(JSObject object) {
+    object['v'] = versionCode.toJS;
+  }
+
+  bool operator >=(ProtocolVersion other) {
+    return versionCode >= other.versionCode;
+  }
+
+  static ProtocolVersion negotiate(int? versionCode) {
+    return switch (versionCode) {
+      null => legacy,
+      <= 0 => legacy,
+      1 => v1,
+      2 => v2,
+      > 2 => current,
+      _ => throw AssertionError(),
+    };
+  }
+
+  static ProtocolVersion fromJsObject(JSObject object) {
+    if (object.has('v')) {
+      return negotiate((object['v'] as JSNumber).toDartInt);
+    } else {
+      return legacy;
+    }
+  }
+}
+
+typedef PostMessage = void Function(JSObject? msg, List<JSObject>? transfer);
 
 /// Sealed superclass for JavaScript objects exchanged between the UI tab and
 /// workers spawned by drift to find a suitable database implementation.
 sealed class WasmInitializationMessage {
   WasmInitializationMessage();
 
-  factory WasmInitializationMessage.fromJs(Object jsObject) {
-    final type = getProperty<String>(jsObject, 'type');
-    final payload = getProperty<Object?>(jsObject, 'payload');
+  factory WasmInitializationMessage.fromJs(JSObject jsObject) {
+    final type = (jsObject['type'] as JSString).toDart;
+    final payload = jsObject['payload'];
 
     return switch (type) {
-      WorkerError.type => WorkerError.fromJsPayload(payload!),
-      ServeDriftDatabase.type => ServeDriftDatabase.fromJsPayload(payload!),
+      WorkerError.type => WorkerError.fromJsPayload(payload as JSObject),
+      ServeDriftDatabase.type =>
+        ServeDriftDatabase.fromJsPayload(payload as JSObject),
       StartFileSystemServer.type =>
-        StartFileSystemServer.fromJsPayload(payload!),
+        StartFileSystemServer.fromJsPayload(payload as JSObject),
       RequestCompatibilityCheck.type =>
         RequestCompatibilityCheck.fromJsPayload(payload),
       DedicatedWorkerCompatibilityResult.type =>
-        DedicatedWorkerCompatibilityResult.fromJsPayload(payload!),
+        DedicatedWorkerCompatibilityResult.fromJsPayload(payload as JSObject),
       SharedWorkerCompatibilityResult.type =>
-        SharedWorkerCompatibilityResult.fromJsPayload(payload!),
-      DeleteDatabase.type => DeleteDatabase.fromJsPayload(payload!),
+        SharedWorkerCompatibilityResult.fromJsPayload(payload as JSArray),
+      DeleteDatabase.type => DeleteDatabase.fromJsPayload(payload as JSAny),
       _ => throw ArgumentError('Unknown type $type'),
     };
   }
 
   factory WasmInitializationMessage.read(MessageEvent event) {
-    // Not using event.data because we don't want the SDK to dartify the raw JS
-    // object we're passing around.
-    final rawData = getProperty<Object>(event, 'data');
-    return WasmInitializationMessage.fromJs(rawData);
+    return WasmInitializationMessage.fromJs(event.data as JSObject);
   }
 
   void sendTo(PostMessage sender);
 
   void sendToWorker(Worker worker) {
-    sendTo(worker.postMessage);
+    sendTo((msg, transfer) {
+      worker.postMessage(msg, (transfer ?? const []).toJS);
+    });
   }
 
   void sendToPort(MessagePort port) {
-    sendTo(port.postMessage);
+    sendTo((msg, transfer) {
+      port.postMessage(msg, (transfer ?? const []).toJS);
+    });
   }
 
   void sendToClient(DedicatedWorkerGlobalScope worker) {
-    sendTo(worker.postMessage);
+    sendTo((msg, transfer) {
+      worker.postMessage(msg, (transfer ?? const []).toJS);
+    });
   }
 }
 
@@ -65,6 +119,12 @@ sealed class CompatibilityResult extends WasmInitializationMessage {
   /// be used to check whether the database exists.
   final List<ExistingDatabase> existingDatabases;
 
+  /// The latest protocol version spoken by the worker.
+  ///
+  /// Workers only started to report their version in drift 2.15, we assume
+  /// [ProtocolVersion.legacy] for workers that don't report their version.
+  final ProtocolVersion version;
+
   final bool indexedDbExists;
   final bool opfsExists;
 
@@ -74,6 +134,7 @@ sealed class CompatibilityResult extends WasmInitializationMessage {
     required this.existingDatabases,
     required this.indexedDbExists,
     required this.opfsExists,
+    required this.version,
   });
 }
 
@@ -96,16 +157,22 @@ final class SharedWorkerCompatibilityResult extends CompatibilityResult {
     required super.indexedDbExists,
     required super.opfsExists,
     required super.existingDatabases,
+    required super.version,
   });
 
-  factory SharedWorkerCompatibilityResult.fromJsPayload(Object payload) {
-    final asList = payload as List;
+  factory SharedWorkerCompatibilityResult.fromJsPayload(JSArray payload) {
+    final asList = payload.toDart;
     final asBooleans = asList.cast<bool>();
 
     final List<ExistingDatabase> existingDatabases;
+    var version = ProtocolVersion.legacy;
+
     if (asList.length > 5) {
-      existingDatabases =
-          EncodeLocations.readFromJs(asList[5] as List<dynamic>);
+      existingDatabases = EncodeLocations.readFromJs(asList[5] as JSArray);
+
+      if (asList.length > 6) {
+        version = ProtocolVersion.negotiate(asList[6] as int);
+      }
     } else {
       existingDatabases = const [];
     }
@@ -117,19 +184,23 @@ final class SharedWorkerCompatibilityResult extends CompatibilityResult {
       indexedDbExists: asBooleans[3],
       opfsExists: asBooleans[4],
       existingDatabases: existingDatabases,
+      version: version,
     );
   }
 
   @override
   void sendTo(PostMessage sender) {
-    sender.sendTyped(type, [
-      canSpawnDedicatedWorkers,
-      dedicatedWorkersCanUseOpfs,
-      canUseIndexedDb,
-      indexedDbExists,
-      opfsExists,
-      existingDatabases.encodeToJs(),
-    ]);
+    sender.sendTyped(
+        type,
+        [
+          canSpawnDedicatedWorkers.toJS,
+          dedicatedWorkersCanUseOpfs.toJS,
+          canUseIndexedDb.toJS,
+          indexedDbExists.toJS,
+          opfsExists.toJS,
+          existingDatabases.encodeToJs(),
+          version.versionCode.toJS,
+        ].toJS);
   }
 
   @override
@@ -150,13 +221,13 @@ final class WorkerError extends WasmInitializationMessage implements Exception {
 
   WorkerError(this.error);
 
-  factory WorkerError.fromJsPayload(Object payload) {
-    return WorkerError(payload as String);
+  factory WorkerError.fromJsPayload(JSObject payload) {
+    return WorkerError((payload as JSString).toDart);
   }
 
   @override
   void sendTo(PostMessage sender) {
-    sender.sendTyped(type, error);
+    sender.sendTyped(type, error.toJS);
   }
 
   @override
@@ -175,6 +246,8 @@ final class ServeDriftDatabase extends WasmInitializationMessage {
   final WasmStorageImplementation storage;
   final String databaseName;
   final MessagePort? initializationPort;
+  final ProtocolVersion protocolVersion;
+  final bool enableMigrations;
 
   ServeDriftDatabase({
     required this.sqlite3WasmUri,
@@ -182,32 +255,42 @@ final class ServeDriftDatabase extends WasmInitializationMessage {
     required this.storage,
     required this.databaseName,
     required this.initializationPort,
+    required this.protocolVersion,
+    required this.enableMigrations,
   });
 
-  factory ServeDriftDatabase.fromJsPayload(Object payload) {
+  factory ServeDriftDatabase.fromJsPayload(JSObject payload) {
+    final version = ProtocolVersion.fromJsObject(payload);
+
     return ServeDriftDatabase(
-      sqlite3WasmUri: Uri.parse(getProperty(payload, 'sqlite')),
-      port: getProperty(payload, 'port'),
+      sqlite3WasmUri: Uri.parse((payload['sqlite'] as JSString).toDart),
+      port: payload['port'] as MessagePort,
       storage: WasmStorageImplementation.values
-          .byName(getProperty(payload, 'storage')),
-      databaseName: getProperty(payload, 'database'),
-      initializationPort: getProperty(payload, 'initPort'),
+          .byName((payload['storage'] as JSString).toDart),
+      databaseName: (payload['database'] as JSString).toDart,
+      initializationPort: payload['initPort'] as MessagePort?,
+      enableMigrations: version >= ProtocolVersion.v2
+          ? (payload['migrations'] as JSBoolean).toDart
+          : true,
+      protocolVersion: version,
     );
   }
 
   @override
   void sendTo(PostMessage sender) {
-    final object = newObject<Object>();
-    setProperty(object, 'sqlite', sqlite3WasmUri.toString());
-    setProperty(object, 'port', port);
-    setProperty(object, 'storage', storage.name);
-    setProperty(object, 'database', databaseName);
-    final initPort = initializationPort;
-    setProperty(object, 'initPort', initPort);
+    final object = JSObject()
+      ..['sqlite'] = sqlite3WasmUri.toString().toJS
+      ..['port'] = port
+      ..['storage'] = storage.name.toJS
+      ..['database'] = databaseName.toJS
+      ..['initPort'] = initializationPort
+      ..['migrations'] = enableMigrations.toJS;
+
+    protocolVersion.writeToJs(object);
 
     sender.sendTyped(type, object, [
       port,
-      if (initPort != null) initPort,
+      if (initializationPort != null) initializationPort!,
     ]);
   }
 }
@@ -223,13 +306,13 @@ final class RequestCompatibilityCheck extends WasmInitializationMessage {
 
   RequestCompatibilityCheck(this.databaseName);
 
-  factory RequestCompatibilityCheck.fromJsPayload(Object? payload) {
-    return RequestCompatibilityCheck(payload as String);
+  factory RequestCompatibilityCheck.fromJsPayload(JSAny? payload) {
+    return RequestCompatibilityCheck((payload as JSString).toDart);
   }
 
   @override
   void sendTo(PostMessage sender) {
-    sender.sendTyped(type, databaseName);
+    sender.sendTyped(type, databaseName.toJS);
   }
 }
 
@@ -249,40 +332,42 @@ final class DedicatedWorkerCompatibilityResult extends CompatibilityResult {
     required super.indexedDbExists,
     required super.opfsExists,
     required super.existingDatabases,
+    required super.version,
   });
 
-  factory DedicatedWorkerCompatibilityResult.fromJsPayload(Object payload) {
+  factory DedicatedWorkerCompatibilityResult.fromJsPayload(JSObject payload) {
     final existingDatabases = <ExistingDatabase>[];
 
-    if (hasProperty(payload, 'existing')) {
+    if (payload.has('existing')) {
       existingDatabases
-          .addAll(EncodeLocations.readFromJs(getProperty(payload, 'existing')));
+          .addAll(EncodeLocations.readFromJs(payload['existing'] as JSArray));
     }
 
     return DedicatedWorkerCompatibilityResult(
-      supportsNestedWorkers: getProperty(payload, 'supportsNestedWorkers'),
-      canAccessOpfs: getProperty(payload, 'canAccessOpfs'),
+      supportsNestedWorkers:
+          (payload['supportsNestedWorkers'] as JSBoolean).toDart,
+      canAccessOpfs: (payload['canAccessOpfs'] as JSBoolean).toDart,
       supportsSharedArrayBuffers:
-          getProperty(payload, 'supportsSharedArrayBuffers'),
-      supportsIndexedDb: getProperty(payload, 'supportsIndexedDb'),
-      indexedDbExists: getProperty(payload, 'indexedDbExists'),
-      opfsExists: getProperty(payload, 'opfsExists'),
+          (payload['supportsSharedArrayBuffers'] as JSBoolean).toDart,
+      supportsIndexedDb: (payload['supportsIndexedDb'] as JSBoolean).toDart,
+      indexedDbExists: (payload['indexedDbExists'] as JSBoolean).toDart,
+      opfsExists: (payload['opfsExists'] as JSBoolean).toDart,
       existingDatabases: existingDatabases,
+      version: ProtocolVersion.fromJsObject(payload),
     );
   }
 
   @override
   void sendTo(PostMessage sender) {
-    final object = newObject<Object>();
-
-    setProperty(object, 'supportsNestedWorkers', supportsNestedWorkers);
-    setProperty(object, 'canAccessOpfs', canAccessOpfs);
-    setProperty(object, 'supportsIndexedDb', supportsIndexedDb);
-    setProperty(
-        object, 'supportsSharedArrayBuffers', supportsSharedArrayBuffers);
-    setProperty(object, 'indexedDbExists', indexedDbExists);
-    setProperty(object, 'opfsExists', opfsExists);
-    setProperty(object, 'existing', existingDatabases.encodeToJs());
+    final object = JSObject()
+      ..['supportsNestedWorkers'] = supportsNestedWorkers.toJS
+      ..['canAccessOpfs'] = canAccessOpfs.toJS
+      ..['supportsIndexedDb'] = supportsIndexedDb.toJS
+      ..['supportsSharedArrayBuffers'] = supportsSharedArrayBuffers.toJS
+      ..['indexedDbExists'] = indexedDbExists.toJS
+      ..['opfsExists'] = opfsExists.toJS
+      ..['existing'] = existingDatabases.encodeToJs();
+    version.writeToJs(object);
 
     sender.sendTyped(type, object);
   }
@@ -308,13 +393,13 @@ final class StartFileSystemServer extends WasmInitializationMessage {
 
   StartFileSystemServer(this.sqlite3Options);
 
-  factory StartFileSystemServer.fromJsPayload(Object payload) {
+  factory StartFileSystemServer.fromJsPayload(JSObject payload) {
     return StartFileSystemServer(payload as WorkerOptions);
   }
 
   @override
   void sendTo(PostMessage sender) {
-    sender.sendTyped(type, sqlite3Options);
+    sender.sendTyped(type, sqlite3Options as JSObject);
   }
 }
 
@@ -325,53 +410,51 @@ final class DeleteDatabase extends WasmInitializationMessage {
 
   DeleteDatabase(this.database);
 
-  factory DeleteDatabase.fromJsPayload(Object payload) {
-    final asList = payload as List<Object?>;
+  factory DeleteDatabase.fromJsPayload(JSAny payload) {
+    final asList = (payload as JSArray).toDart;
     return DeleteDatabase((
-      WebStorageApi.byName[asList[0] as String]!,
-      asList[1] as String,
+      WebStorageApi.byName[(asList[0] as JSString).toDart]!,
+      (asList[1] as JSString).toDart,
     ));
   }
 
   @override
   void sendTo(PostMessage sender) {
-    sender.sendTyped(type, [database.$1.name, database.$2]);
+    sender.sendTyped(type, [database.$1.name.toJS, database.$2.toJS].toJS);
   }
 }
 
 extension EncodeLocations on List<ExistingDatabase> {
-  static List<ExistingDatabase> readFromJs(List<Object?> object) {
+  static List<ExistingDatabase> readFromJs(JSArray object) {
     final existing = <ExistingDatabase>[];
 
-    for (final entry in object) {
+    for (final entry in object.toDart.cast<JSObject>()) {
       existing.add((
-        WebStorageApi.byName[getProperty(entry as Object, 'l')]!,
-        getProperty(entry, 'n'),
+        WebStorageApi.byName[(entry['l'] as JSString).toDart]!,
+        (entry['n'] as JSString).toDart,
       ));
     }
 
     return existing;
   }
 
-  Object encodeToJs() {
-    final existing = JsArray<Object>();
+  JSObject encodeToJs() {
+    final existing = <JSObject>[];
     for (final entry in this) {
-      final object = newObject<Object>();
-      setProperty(object, 'l', entry.$1.name);
-      setProperty(object, 'n', entry.$2);
-
-      existing.add(object);
+      existing.add(JSObject()
+        ..['l'] = entry.$1.name.toJS
+        ..['n'] = entry.$2.toJS);
     }
 
-    return existing;
+    return existing.toJS;
   }
 }
 
 extension on PostMessage {
-  void sendTyped(String type, Object? payload, [List<Object>? transfer]) {
-    final object = newObject<Object>();
-    setProperty(object, 'type', type);
-    setProperty(object, 'payload', payload);
+  void sendTyped(String type, JSAny? payload, [List<JSObject>? transfer]) {
+    final object = JSObject()
+      ..['type'] = type.toJS
+      ..['payload'] = payload;
 
     call(object, transfer);
   }

@@ -40,7 +40,11 @@ enum Browser {
 
   Future<Process> spawnDriver() async {
     return switch (this) {
-      firefox => Process.start('geckodriver', []),
+      firefox => Process.start('geckodriver', []).then((result) async {
+          // geckodriver seems to take a while to initialize
+          await Future.delayed(const Duration(seconds: 1));
+          return result;
+        }),
       chrome =>
         Process.start('chromedriver', ['--port=4444', '--url-base=/wd/hub']),
     };
@@ -85,10 +89,35 @@ void main() {
         expect(result.storages, expectedImplementations);
       });
 
+      test('via regular open', () async {
+        await driver.openDatabase();
+        expect(await driver.amountOfRows, 0);
+
+        await driver.insertIntoDatabase();
+        await driver.waitForTableUpdate();
+        expect(await driver.amountOfRows, 1);
+      });
+
+      test('regular open with initializaton', () async {
+        await driver.enableInitialization(InitializationMode.loadAsset);
+        await driver.openDatabase();
+
+        expect(await driver.amountOfRows, 1);
+      });
+
+      test('disable migrations', () async {
+        await driver
+            .enableInitialization(InitializationMode.noneAndDisableMigrations);
+        await driver.openDatabase();
+
+        expect(await driver.hasTable, isFalse);
+      });
+
       for (final entry in browser.availableImplementations) {
         group(entry.name, () {
           test('basic', () async {
             await driver.openDatabase(entry);
+            expect(await driver.amountOfRows, 0);
 
             await driver.insertIntoDatabase();
             await driver.waitForTableUpdate();
@@ -127,7 +156,7 @@ void main() {
               await driver.insertIntoDatabase();
               await driver.waitForTableUpdate();
 
-              await driver.driver.refresh(); // Reset JS state
+              await driver.closeDatabase();
 
               final newImpls = await driver.probeImplementations();
               expect(newImpls.existing, hasLength(1));
@@ -139,10 +168,31 @@ void main() {
               final finalImpls = await driver.probeImplementations();
               expect(finalImpls.existing, isEmpty);
             });
+
+            test('migrations', () async {
+              await driver.openDatabase(entry);
+              await driver.insertIntoDatabase();
+              await driver.waitForTableUpdate();
+
+              await driver.closeDatabase();
+              await driver.driver.refresh();
+
+              await driver.setSchemaVersion(2);
+              await driver.openDatabase(entry);
+              // The migration adds a row
+              expect(await driver.amountOfRows, 2);
+            });
+
+            test('disabling migrations', () async {
+              await driver.enableInitialization(
+                  InitializationMode.noneAndDisableMigrations);
+              await driver.openDatabase();
+              expect(await driver.hasTable, isFalse);
+            });
           }
 
           group(
-            'initialization from ',
+            'initialization from',
             () {
               test('static blob', () async {
                 await driver.enableInitialization(InitializationMode.loadAsset);

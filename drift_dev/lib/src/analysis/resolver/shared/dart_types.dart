@@ -144,8 +144,8 @@ ExistingRowClass? validateExistingClass(
     final missingGetters = <String>[];
 
     for (final column in columns) {
-      final matchingField = dartClass.classElement
-          .lookUpGetter(column.nameInDart, dartClass.classElement.library);
+      final matchingField = dartClass.classElement.augmented.lookUpGetter(
+          name: column.nameInDart, library: dartClass.classElement.library);
 
       if (matchingField == null) {
         missingGetters.add(column.nameInDart);
@@ -267,10 +267,30 @@ enum EnumType {
   textEnum,
 }
 
+CustomColumnType? readCustomType(
+  LibraryElement library,
+  Expression dartExpression,
+  KnownDriftTypes helper,
+  void Function(String) reportError,
+) {
+  final staticType = dartExpression.staticType;
+  final asCustomType =
+      staticType != null ? helper.asUserDefinedType(staticType) : null;
+
+  if (asCustomType == null) {
+    reportError('Not a custom type');
+    return null;
+  }
+
+  final dartType = asCustomType.typeArguments[0];
+
+  return CustomColumnType(AnnotatedDartCode.ast(dartExpression), dartType);
+}
+
 AppliedTypeConverter? readTypeConverter(
   LibraryElement library,
   Expression dartExpression,
-  DriftSqlType columnType,
+  ColumnType columnType,
   bool columnIsNullable,
   void Function(String) reportError,
   KnownDriftTypes helper,
@@ -305,7 +325,7 @@ AppliedTypeConverter? readTypeConverter(
           "potentially map to `null` which can't be stored in the database.");
     } else if (!canBeSkippedForNulls) {
       final alternative = appliesToJsonToo
-          ? 'JsonTypeConverter.asNullable'
+          ? 'JsonTypeConverter2.asNullable'
           : 'NullAwareTypeConverter.wrap';
 
       reportError('This column is nullable, but the type converter has a non-'
@@ -369,9 +389,9 @@ AppliedTypeConverter readEnumConverter(
     jsonType: columnEnumType == EnumType.intEnum
         ? typeProvider.intType
         : typeProvider.stringType,
-    sqlType: columnEnumType == EnumType.intEnum
+    sqlType: ColumnType.drift(columnEnumType == EnumType.intEnum
         ? DriftSqlType.int
-        : DriftSqlType.string,
+        : DriftSqlType.string),
     dartTypeIsNullable: false,
     sqlTypeIsNullable: false,
     isDriftEnumTypeConverter: true,
@@ -394,10 +414,7 @@ void _checkParameterType(
 
   final nullableDartType = column.nullableInDart;
 
-  if (library.isNonNullableByDefault &&
-      nullableDartType &&
-      !typesystem.isNullable(type) &&
-      element.isRequired) {
+  if (nullableDartType && !typesystem.isNullable(type) && element.isRequired) {
     error('Expected this parameter to be nullable');
     return;
   }
@@ -415,7 +432,7 @@ void _checkParameterType(
 }
 
 bool checkType(
-  DriftSqlType columnType,
+  ColumnType columnType,
   bool columnIsNullable,
   AppliedTypeConverter? typeConverter,
   DartType typeToCheck,
@@ -437,7 +454,7 @@ bool checkType(
 
   if (!typeSystem.isAssignableTo(expectedDartType, typeToCheck)) {
     error('Parameter must accept '
-        '${expectedDartType.getDisplayString(withNullability: true)}');
+        '${expectedDartType.getDisplayString()}');
     return false;
   }
 
@@ -467,8 +484,12 @@ DartType regularColumnType(
 }
 
 extension on TypeProvider {
-  DartType typeFor(DriftSqlType type, KnownDriftTypes knownTypes) {
-    switch (type) {
+  DartType typeFor(ColumnType type, KnownDriftTypes knownTypes) {
+    if (type case ColumnCustomType(:final custom)) {
+      return custom.dartType;
+    }
+
+    switch (type.builtin) {
       case DriftSqlType.int:
         return intType;
       case DriftSqlType.bigInt:

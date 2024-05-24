@@ -135,7 +135,8 @@ class UpdateCompanionWriter {
 
     final expression = _emitter.drift('Expression');
     for (final column in columns) {
-      final typeName = _emitter.dartCode(_emitter.innerColumnType(column));
+      final typeName =
+          _emitter.dartCode(_emitter.innerColumnType(column.sqlType));
       _buffer.write('$expression<$typeName>? ${column.nameInDart}, \n');
     }
 
@@ -190,32 +191,14 @@ class UpdateCompanionWriter {
     for (final column in columns) {
       final getterName = thisIfNeeded(column.nameInDart, locals);
 
-      _buffer.write('if ($getterName.present) {');
-      final typeName =
-          _emitter.dartCode(_emitter.variableTypeCode(column, nullable: false));
-      final mapSetter = 'map[${asDartLiteral(column.nameInSql)}] = '
-          '${_emitter.drift('Variable')}<$typeName>';
+      _buffer.writeln('if ($getterName.present) {');
+      _buffer.write('map[${asDartLiteral(column.nameInSql)}] = ');
+      var value = '$getterName.value';
 
-      final converter = column.typeConverter;
-      if (converter != null) {
-        // apply type converter before writing the variable
-        final fieldName = _emitter.dartCode(
-            _emitter.readConverter(converter, forNullable: column.nullable));
-        _buffer
-          ..write('final converter = $fieldName;\n')
-          ..write(mapSetter)
-          ..write('(converter.toSql($getterName.value)')
-          ..write(');');
-      } else {
-        // no type converter. Write variable directly
-        _buffer
-          ..write(mapSetter)
-          ..write('(')
-          ..write('$getterName.value')
-          ..write(');');
-      }
+      _emitter.writeDart(
+          _emitter.wrapInVariable(column, AnnotatedDartCode.text(value)));
 
-      _buffer.write('}');
+      _buffer.writeln(';}');
     }
 
     _buffer.write('return map; \n}\n');

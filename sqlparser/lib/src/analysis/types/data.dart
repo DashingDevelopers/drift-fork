@@ -1,3 +1,4 @@
+import 'package:collection/collection.dart';
 import 'package:sqlparser/src/engine/sql_engine.dart';
 
 /// Something that has a type.
@@ -19,12 +20,14 @@ enum BasicType {
 }
 
 class ResolvedType {
+  static const _hintEquality = ListEquality<TypeHint>();
+
   final BasicType? type;
 
   /// We set hints for additional information that might be useful for
   /// applications but aren't covered by just exposing a [BasicType]. See the
   /// comment on [TypeHint] for examples.
-  final TypeHint? hint;
+  final List<TypeHint> hints;
 
   /// Whether this type is nullable. A `null` value for [nullable] indicates
   /// that nullability is unknown.
@@ -34,15 +37,22 @@ class ResolvedType {
   final bool isArray;
 
   const ResolvedType(
-      {this.type, this.hint, this.nullable = false, this.isArray = false});
+      {this.type,
+      this.hints = const [],
+      this.nullable = false,
+      this.isArray = false});
+
   const ResolvedType.bool({bool? nullable = false})
-      : this(type: BasicType.int, hint: const IsBoolean(), nullable: nullable);
+      : this(
+            type: BasicType.int,
+            hints: const [IsBoolean()],
+            nullable: nullable);
 
   ResolvedType get withoutNullabilityInfo {
     return nullable == null
         ? this
         : ResolvedType(
-            type: type, hint: hint, isArray: isArray, nullable: null);
+            type: type, hints: hints, isArray: isArray, nullable: null);
   }
 
   ResolvedType withNullable(bool nullable) {
@@ -53,33 +63,42 @@ class ResolvedType {
     return copyWith(isArray: array);
   }
 
-  ResolvedType copyWith({TypeHint? hint, bool? nullable, bool? isArray}) {
+  ResolvedType copyWith(
+      {List<TypeHint>? hints, bool? nullable, bool? isArray}) {
     return ResolvedType(
       type: type,
-      hint: hint ?? this.hint,
+      hints: hints ?? this.hints,
       nullable: nullable ?? this.nullable,
       isArray: isArray ?? this.isArray,
     );
   }
 
+  T? hint<T extends TypeHint>() {
+    return hints.whereType<T>().firstOrNull;
+  }
+
+  ResolvedType addHint(TypeHint hint) {
+    return copyWith(hints: [...hints, hint]);
+  }
+
   @override
-  bool operator ==(dynamic other) {
+  bool operator ==(Object other) {
     return identical(this, other) ||
         other is ResolvedType &&
             other.type == type &&
-            other.hint == hint &&
+            _hintEquality.equals(other.hints, hints) &&
             other.nullable == nullable &&
             other.isArray == isArray;
   }
 
   @override
   int get hashCode {
-    return type.hashCode + hint.hashCode + nullable.hashCode;
+    return type.hashCode + _hintEquality.hash(hints) + nullable.hashCode;
   }
 
   @override
   String toString() {
-    return 'ResolvedType($type, hint: $hint, nullable: $nullable, '
+    return 'ResolvedType($type, hints: $hints, nullable: $nullable, '
         'array: $isArray)';
   }
 }
@@ -93,8 +112,9 @@ abstract class TypeHint {
 
   @override
   int get hashCode => runtimeType.hashCode;
+
   @override
-  bool operator ==(dynamic other) => other.runtimeType == runtimeType;
+  bool operator ==(Object other) => other.runtimeType == runtimeType;
 }
 
 /// Type hint to mark that this type will contain a boolean value.
@@ -111,6 +131,12 @@ class IsDateTime extends TypeHint {
 /// be mapped to Dart as a [BigInt].
 class IsBigInt extends TypeHint {
   const IsBigInt();
+}
+
+/// This could be a `blob` or `text` depending on the context
+/// https://www.sqlite.org/geopoly.html
+class IsGeopolyPolygon extends TypeHint {
+  const IsGeopolyPolygon();
 }
 
 /// Result of resolving a type. This can either have the resolved [type] set,
@@ -134,10 +160,12 @@ class ResolveResult {
   const ResolveResult(this.type)
       : needsContext = false,
         unknown = false;
+
   const ResolveResult.needsContext()
       : type = null,
         needsContext = true,
         unknown = false;
+
   const ResolveResult.unknown()
       : type = null,
         needsContext = false,
@@ -163,7 +191,7 @@ class ResolveResult {
   }
 
   @override
-  bool operator ==(dynamic other) {
+  bool operator ==(Object other) {
     return identical(this, other) ||
         other is ResolveResult &&
             other.type == type &&

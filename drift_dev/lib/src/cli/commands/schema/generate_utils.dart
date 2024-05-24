@@ -93,6 +93,7 @@ class GenerateUtilsCommand extends Command {
     final options = DriftOptions.fromJson({
       ...cli.project.moorOptions.toJson(),
       ...schema.options,
+      'generate_manager': false,
     });
 
     final writer = Writer(
@@ -101,7 +102,7 @@ class GenerateUtilsCommand extends Command {
         forSchema: version,
         writeCompanions: companions,
         writeDataClasses: dataClasses,
-        imports: ImportManagerForPartFiles(),
+        imports: NullImportManager(),
       ),
     );
     final file = File(p.join(output.path, _filenameForVersion(version)));

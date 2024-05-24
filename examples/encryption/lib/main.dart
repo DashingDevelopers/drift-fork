@@ -1,25 +1,14 @@
-import 'dart:ffi';
-
 import 'package:drift/drift.dart';
 import 'package:flutter/material.dart';
-import 'package:sqlite3/open.dart';
-import 'package:sqlcipher_flutter_libs/sqlcipher_flutter_libs.dart';
 
 import 'database.dart';
 
 void main() {
-  open
-    ..overrideFor(OperatingSystem.android, openCipherOnAndroid)
-    ..overrideFor(
-        OperatingSystem.linux, () => DynamicLibrary.open('libsqlcipher.so'))
-    ..overrideFor(
-        OperatingSystem.windows, () => DynamicLibrary.open('sqlcipher.dll'));
-
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +24,7 @@ class MyApp extends StatelessWidget {
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({Key? key}) : super(key: key);
+  const HomePage({super.key});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -95,7 +84,7 @@ class _AddEntryDialog extends StatefulWidget {
   // database around, but tiny example only wants to show how to use encryption.
   final MyEncryptedDatabase database;
 
-  const _AddEntryDialog({Key? key, required this.database}) : super(key: key);
+  const _AddEntryDialog({required this.database});
 
   @override
   State<_AddEntryDialog> createState() => _AddEntryDialogState();

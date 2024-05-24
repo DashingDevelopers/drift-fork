@@ -27,7 +27,7 @@ abstract class ReferenceScope {
   /// All available result sets that can also be seen in child scopes.
   ///
   /// Usually, this is the same list as the result sets being declared in this
-  /// scope. However, some exceptions apply (see e.g. [SubqueryInFromScope]).
+  /// scope. However, some exceptions apply (see e.g. [SourceScope]).
   Iterable<ResultSetAvailableInStatement> get resultSetAvailableToChildScopes =>
       const Iterable.empty();
 
@@ -62,10 +62,23 @@ abstract class ReferenceScope {
   ///
   /// Like [addResolvedResultSet], this operation is not supported on all
   /// scopes.
-  void addAlias(AstNode origin, ResultSet resultSet, String alias) {
+  ///
+  /// [canUseUnqualifiedColumns] controls whether [resolveUnqualifiedReference]
+  /// considers the alias when resolving references. Some aliases, such as `new`
+  /// and `old` in triggers, can only be used in their qualified form and thus
+  /// have that parameter set to false.
+  void addAlias(
+    AstNode origin,
+    ResultSet resultSet,
+    String alias, {
+    bool canUseUnqualifiedColumns = true,
+  }) {
     final createdAlias = TableAlias(resultSet, alias);
     addResolvedResultSet(
-        alias, ResultSetAvailableInStatement(origin, createdAlias));
+      alias,
+      ResultSetAvailableInStatement(origin, createdAlias,
+          canUseUnqualifiedColumns: canUseUnqualifiedColumns),
+    );
   }
 
   /// Attempts to find a result set that _can_ be added to a scope.
@@ -154,8 +167,8 @@ mixin _HasParentScope on ReferenceScope {
 ///    them in a [StatementScope] as well.
 ///  - subqueries appearing in a `FROM` clause _can't_ see outer columns and
 ///    tables. These statements are also wrapped in a [StatementScope], but a
-///    [SubqueryInFromScope] is insertted as an intermediatet scope to prevent
-///    the inner scope from seeing the outer columns.
+///    [SourceScope] is inserted as an intermediate scope to prevent the inner
+///    scope from seeing the outer columns.
 
 class StatementScope extends ReferenceScope with _HasParentScope {
   final ReferenceScope parent;
@@ -207,10 +220,15 @@ class StatementScope extends ReferenceScope with _HasParentScope {
   }
 
   @override
-  void addAlias(AstNode origin, ResultSet resultSet, String alias) {
+  void addAlias(
+    AstNode origin,
+    ResultSet resultSet,
+    String alias, {
+    bool canUseUnqualifiedColumns = true,
+  }) {
     final createdAlias = TableAlias(resultSet, alias);
-    additionalKnownTables[alias] = createdAlias;
-    resultSets[alias] = ResultSetAvailableInStatement(origin, createdAlias);
+    resultSets[alias] = ResultSetAvailableInStatement(origin, createdAlias,
+        canUseUnqualifiedColumns: canUseUnqualifiedColumns);
   }
 
   @override
@@ -247,7 +265,10 @@ class StatementScope extends ReferenceScope with _HasParentScope {
     for (final availableSource in available) {
       final resolvedColumns =
           availableSource.resultSet.resultSet?.resolvedColumns;
-      if (resolvedColumns == null) continue;
+      if (resolvedColumns == null ||
+          !availableSource.canUseUnqualifiedColumns) {
+        continue;
+      }
 
       for (final column in resolvedColumns) {
         if (column.name.toLowerCase() == columnName.toLowerCase() &&
@@ -348,10 +369,10 @@ class MiscStatementSubScope extends ReferenceScope with _HasParentScope {
 class SingleTableReferenceScope extends ReferenceScope {
   final ReferenceScope parent;
 
-  String? addedTableName;
-  ResultSetAvailableInStatement? addedTable;
+  final String addedTableName;
+  final ResultSetAvailableInStatement? addedTable;
 
-  SingleTableReferenceScope(this.parent);
+  SingleTableReferenceScope(this.parent, this.addedTableName, this.addedTable);
 
   @override
   RootScope get rootScope => parent.rootScope;
@@ -363,13 +384,6 @@ class SingleTableReferenceScope extends ReferenceScope {
     } else {
       return null;
     }
-  }
-
-  @override
-  void addResolvedResultSet(
-      String? name, ResultSetAvailableInStatement resultSet) {
-    addedTableName = null;
-    addedTable = null;
   }
 
   @override

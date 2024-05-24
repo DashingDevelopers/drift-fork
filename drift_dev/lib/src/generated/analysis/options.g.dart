@@ -18,7 +18,9 @@ DriftOptions _$DriftOptionsFromJson(Map json) => $checkedCreate(
             'skip_verification_code',
             'use_data_class_name_for_companions',
             'use_column_name_as_json_key_when_defined_in_moor_file',
+            'use_sql_column_name_as_json_key',
             'generate_connect_constructor',
+            'generate_manager',
             'sqlite_modules',
             'sqlite',
             'sql',
@@ -33,6 +35,8 @@ DriftOptions _$DriftOptionsFromJson(Map json) => $checkedCreate(
             'store_date_time_values_as_text',
             'case_from_dart_to_sql',
             'write_to_columns_mixins',
+            'assume_correct_reference',
+            'has_separate_analyzer',
             'preamble',
             'fatal_warnings'
           ],
@@ -50,8 +54,12 @@ DriftOptions _$DriftOptionsFromJson(Map json) => $checkedCreate(
           useColumnNameAsJsonKeyWhenDefinedInMoorFile: $checkedConvert(
               'use_column_name_as_json_key_when_defined_in_moor_file',
               (v) => v as bool? ?? true),
+          useSqlColumnNameAsJsonKey: $checkedConvert(
+              'use_sql_column_name_as_json_key', (v) => v as bool? ?? false),
           generateConnectConstructor: $checkedConvert(
               'generate_connect_constructor', (v) => v as bool? ?? false),
+          generateManager:
+              $checkedConvert('generate_manager', (v) => v as bool? ?? true),
           dataClassToCompanions: $checkedConvert(
               'data_class_to_companions', (v) => v as bool? ?? true),
           generateMutableClasses:
@@ -91,6 +99,10 @@ DriftOptions _$DriftOptionsFromJson(Map json) => $checkedCreate(
           fatalWarnings:
               $checkedConvert('fatal_warnings', (v) => v as bool? ?? false),
           preamble: $checkedConvert('preamble', (v) => v as String?),
+          hasDriftAnalyzer: $checkedConvert(
+              'has_separate_analyzer', (v) => v as bool? ?? false),
+          assumeCorrectReference: $checkedConvert(
+              'assume_correct_reference', (v) => v as bool? ?? false),
           dialect: $checkedConvert('sql',
               (v) => v == null ? null : DialectOptions.fromJson(v as Map)),
         );
@@ -105,7 +117,9 @@ DriftOptions _$DriftOptionsFromJson(Map json) => $checkedCreate(
         'useDataClassNameForCompanions': 'use_data_class_name_for_companions',
         'useColumnNameAsJsonKeyWhenDefinedInMoorFile':
             'use_column_name_as_json_key_when_defined_in_moor_file',
+        'useSqlColumnNameAsJsonKey': 'use_sql_column_name_as_json_key',
         'generateConnectConstructor': 'generate_connect_constructor',
+        'generateManager': 'generate_manager',
         'dataClassToCompanions': 'data_class_to_companions',
         'generateMutableClasses': 'mutable_classes',
         'rawResultSetData': 'raw_result_set_data',
@@ -120,6 +134,8 @@ DriftOptions _$DriftOptionsFromJson(Map json) => $checkedCreate(
         'caseFromDartToSql': 'case_from_dart_to_sql',
         'writeToColumnsMixins': 'write_to_columns_mixins',
         'fatalWarnings': 'fatal_warnings',
+        'hasDriftAnalyzer': 'has_separate_analyzer',
+        'assumeCorrectReference': 'assume_correct_reference',
         'dialect': 'sql'
       },
     );
@@ -135,7 +151,9 @@ Map<String, dynamic> _$DriftOptionsToJson(DriftOptions instance) =>
           instance.useDataClassNameForCompanions,
       'use_column_name_as_json_key_when_defined_in_moor_file':
           instance.useColumnNameAsJsonKeyWhenDefinedInMoorFile,
+      'use_sql_column_name_as_json_key': instance.useSqlColumnNameAsJsonKey,
       'generate_connect_constructor': instance.generateConnectConstructor,
+      'generate_manager': instance.generateManager,
       'sqlite_modules':
           instance.modules.map((e) => _$SqlModuleEnumMap[e]!).toList(),
       'sqlite': instance.sqliteAnalysisOptions?.toJson(),
@@ -153,6 +171,8 @@ Map<String, dynamic> _$DriftOptionsToJson(DriftOptions instance) =>
       'case_from_dart_to_sql':
           _$CaseFromDartToSqlEnumMap[instance.caseFromDartToSql]!,
       'write_to_columns_mixins': instance.writeToColumnsMixins,
+      'assume_correct_reference': instance.assumeCorrectReference,
+      'has_separate_analyzer': instance.hasDriftAnalyzer,
       'preamble': instance.preamble,
       'fatal_warnings': instance.fatalWarnings,
     };
@@ -164,6 +184,7 @@ const _$SqlModuleEnumMap = {
   SqlModule.math: 'math',
   SqlModule.rtree: 'rtree',
   SqlModule.spellfix1: 'spellfix1',
+  SqlModule.geopoly: 'geopoly',
 };
 
 const _$CaseFromDartToSqlEnumMap = {

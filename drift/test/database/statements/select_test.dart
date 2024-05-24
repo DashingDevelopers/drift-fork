@@ -16,7 +16,7 @@ final _dataOfTodoEntry = {
 };
 
 const _todoEntry = TodoEntry(
-  id: 10,
+  id: RowId(10),
   title: 'A todo title',
   content: 'Content',
   category: 3,
@@ -126,7 +126,7 @@ void main() {
         }
       ];
       const resolved = TodoEntry(
-        id: 10,
+        id: RowId(10),
         title: null,
         content: 'Content',
         category: null,
@@ -198,7 +198,7 @@ void main() {
     expect(
       category,
       const Category(
-        id: 1,
+        id: RowId(1),
         description: 'description',
         descriptionInUpperCase: 'DESCRIPTION',
         priority: CategoryPriority.high,
@@ -232,7 +232,7 @@ void main() {
 
     expect(rows, [
       TodoEntry(
-        id: 10,
+        id: RowId(10),
         title: null,
         content: 'Content',
         category: null,
@@ -255,5 +255,34 @@ void main() {
       'SELECT "todos"."id" AS "todos.id", "todos"."title" AS "todos.title", "todos"."content" AS "todos.content", "todos"."target_date" AS "todos.target_date", "todos"."category" AS "todos.category", "todos"."status" AS "todos.status" FROM "todos" INNER JOIN json_each("todos"."content", ?) ON "json_each"."atom" IS NOT NULL;',
       [r'$.foo'],
     ));
+  });
+
+  group('count', () {
+    test('all', () async {
+      when(executor.runSelect(any, any)).thenAnswer((_) async => [
+            {'c0': 3}
+          ]);
+
+      final result = await db.todosTable.count().getSingle();
+      expect(result, 3);
+
+      verify(executor.runSelect(
+          'SELECT COUNT(*) AS "c0" FROM "todos";', argThat(isEmpty)));
+    });
+
+    test('with filter', () async {
+      when(executor.runSelect(any, any)).thenAnswer((_) async => [
+            {'c0': 2}
+          ]);
+
+      final result = await db.todosTable
+          .count(where: (row) => row.id.isBiggerThanValue(12))
+          .getSingle();
+      expect(result, 2);
+
+      verify(executor.runSelect(
+          'SELECT COUNT(*) AS "c0" FROM "todos" WHERE "todos"."id" > ?;',
+          [12]));
+    });
   });
 }

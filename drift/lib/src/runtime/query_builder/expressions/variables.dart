@@ -5,9 +5,10 @@ part of '../query_builder.dart';
 
 /// An expression that represents the value of a dart object encoded to sql
 /// using prepared statements.
-class Variable<T extends Object> extends Expression<T> {
+final class Variable<T extends Object> extends Expression<T> {
   /// The Dart value that will be sent to the database
   final T? value;
+  final UserDefinedSqlType<T>? _customType;
 
   // note that we keep the identity hash/equals here because each variable would
   // get its own index in sqlite and is thus different.
@@ -18,8 +19,14 @@ class Variable<T extends Object> extends Expression<T> {
   @override
   int get hashCode => value.hashCode;
 
+  @override
+  BaseSqlType<T> get driftSqlType => _customType ?? super.driftSqlType;
+
   /// Constructs a new variable from the [value].
-  const Variable(this.value);
+  ///
+  /// For variables of [CustomSqlType]s, the `type` can also be provided as a
+  /// parameter to control how the value is mapped to SQL.
+  const Variable(this.value, [this._customType]);
 
   /// Creates a variable that holds the specified boolean.
   static Variable<bool> withBool(bool value) {
@@ -60,7 +67,7 @@ class Variable<T extends Object> extends Expression<T> {
   /// database engine. For instance, a [DateTime] will me mapped to its unix
   /// timestamp.
   dynamic mapToSimpleValue(GenerationContext context) {
-    return context.typeMapping.mapToSqlVariable(value);
+    return BaseSqlType.mapToSqlParameter<T>(context, _customType, value);
   }
 
   @override
@@ -110,22 +117,28 @@ class Variable<T extends Object> extends Expression<T> {
 /// An expression that represents the value of a dart object encoded to sql
 /// by writing them into the sql statements. For most cases, consider using
 /// [Variable] instead.
-class Constant<T extends Object> extends Expression<T> {
+final class Constant<T extends Object> extends Expression<T> {
+  /// The value that will be converted to an sql literal.
+  final T? value;
+
+  final UserDefinedSqlType<T>? _customType;
+
   /// Constructs a new constant (sql literal) holding the [value].
-  const Constant(this.value);
+  const Constant(this.value, [this._customType]);
 
   @override
   Precedence get precedence => Precedence.primary;
 
-  /// The value that will be converted to an sql literal.
-  final T? value;
+  @override
+  BaseSqlType<T> get driftSqlType => _customType ?? super.driftSqlType;
 
   @override
   bool get isLiteral => true;
 
   @override
   void writeInto(GenerationContext context) {
-    context.buffer.write(context.typeMapping.mapToSqlLiteral(value));
+    return context.buffer
+        .write(BaseSqlType.mapToSqlLiteral(context, _customType, value));
   }
 
   @override

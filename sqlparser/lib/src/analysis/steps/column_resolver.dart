@@ -42,14 +42,16 @@ class ColumnResolver extends RecursiveVisitor<ColumnResolverContext, void> {
 
     final scope = e.statementScope;
 
-    // Add columns of the target table for when and update of clauses
-    scope.expansionOfStarColumn = table.resolvedColumns;
-
     if (e.target.introducesNew) {
-      scope.addAlias(e, table, 'new');
+      scope.addAlias(e, table, 'new', canUseUnqualifiedColumns: false);
     }
     if (e.target.introducesOld) {
-      scope.addAlias(e, table, 'old');
+      scope.addAlias(e, table, 'old', canUseUnqualifiedColumns: false);
+    }
+
+    if (e.target case final UpdateTarget onUpdate) {
+      onUpdate.scope = SingleTableReferenceScope(scope, e.onTable.tableName,
+          ResultSetAvailableInStatement(e.onTable, table));
     }
 
     visitChildren(e, arg);
@@ -156,8 +158,26 @@ class ColumnResolver extends RecursiveVisitor<ColumnResolverContext, void> {
 
   @override
   void visitForeignKeyClause(ForeignKeyClause e, ColumnResolverContext arg) {
-    _resolveTableReference(e.foreignTable, arg);
+    final resolved = _resolveTableReference(e.foreignTable, arg);
+    final scope = SingleTableReferenceScope(
+      e.scope,
+      e.foreignTable.tableName,
+      resolved != null
+          ? ResultSetAvailableInStatement(e.foreignTable, resolved)
+          : null,
+    );
+    e.scope = scope;
     visitExcept(e, e.foreignTable, arg);
+  }
+
+  @override
+  void visitInExpression(InExpression e, ColumnResolverContext arg) {
+    if (e.inside case Queryable query) {
+      _handle(query, [], arg);
+      visitExcept(e, e.inside, arg);
+    } else {
+      super.visitInExpression(e, arg);
+    }
   }
 
   @override
@@ -325,7 +345,17 @@ class ColumnResolver extends RecursiveVisitor<ColumnResolverContext, void> {
       isTableFunction: (function) {
         final handler = context
             .engineOptions.addedTableFunctions[function.name.toLowerCase()];
-        final resolved = handler?.resolveTableValued(context, function);
+        var resolved = handler?.resolveTableValued(context, function);
+
+        // Virtual tables can also be used as table-valued functions, so try to
+        // resolve a table otherwise.
+        if (resolved == null) {
+          final table = scope.resolveResultSetToAdd(function.name);
+          if (table is Table && table.isVirtual) {
+            resolved =
+                function.as != null ? TableAlias(table, function.as!) : table;
+          }
+        }
 
         markAvailableResultSet(
             function, resolved ?? function, function.as ?? function.name);
@@ -366,7 +396,7 @@ class ColumnResolver extends RecursiveVisitor<ColumnResolverContext, void> {
     // result, but also expressions that appear as result columns
     for (final resultColumn in columns) {
       if (resultColumn is StarResultColumn) {
-        Iterable<Column>? visibleColumnsForStar;
+        Iterable<Column> visibleColumnsForStar;
 
         if (resultColumn.tableName != null) {
           final tableResolver =
@@ -380,13 +410,16 @@ class ColumnResolver extends RecursiveVisitor<ColumnResolverContext, void> {
             continue;
           }
 
-          visibleColumnsForStar =
-              tableResolver.resultSet.resultSet?.resolvedColumns?.map(
-                  (tableColumn) => AvailableColumn(tableColumn, tableResolver));
+          visibleColumnsForStar = tableResolver
+                  .resultSet.resultSet?.resolvedColumns
+                  ?.map((tableColumn) =>
+                      AvailableColumn(tableColumn, tableResolver)) ??
+              const [];
         } else {
           // we have a * column without a table, that resolves to every column
           // available
-          visibleColumnsForStar = columnsForStar ?? availableColumns;
+          visibleColumnsForStar =
+              columnsForStar ?? scope.expansionOfStarColumn ?? const [];
 
           // Star columns can't be used without a table (e.g. `SELECT *` is
           // not allowed)
@@ -400,7 +433,7 @@ class ColumnResolver extends RecursiveVisitor<ColumnResolverContext, void> {
         }
 
         final added =
-            visibleColumnsForStar!.where((e) => e.includedInResults).toList();
+            visibleColumnsForStar.where((e) => e.includedInResults).toList();
 
         usedColumns.addAll(added);
         resultColumn.resolvedColumns = added;

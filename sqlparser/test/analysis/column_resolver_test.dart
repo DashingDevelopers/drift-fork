@@ -17,7 +17,7 @@ void main() {
       test('can use OLD references', () {
         final context = engine.analyze('''
 CREATE TRIGGER my_trigger BEFORE DELETE ON demo BEGIN
-  SELECT * FROM old;
+  SELECT * FROM demo WHERE id = old.id;
 END;
         ''');
 
@@ -27,16 +27,15 @@ END;
       test("can't use NEW references", () {
         final context = engine.analyze('''
 CREATE TRIGGER my_trigger BEFORE DELETE ON demo BEGIN
-  SELECT * FROM new;
+   SELECT * FROM demo WHERE id = new.id;
 END;
         ''');
 
         expect(
           context.errors,
-          contains(const TypeMatcher<AnalysisError>()
-              .having((e) => e.type, 'type',
-                  AnalysisErrorType.referencedUnknownTable)
-              .having((e) => e.span!.text, 'span.text', 'new')),
+          contains(analysisErrorWith(
+              type: AnalysisErrorType.referencedUnknownTable,
+              lexeme: 'new.id')),
         );
       });
     });
@@ -45,7 +44,7 @@ END;
       test('can use NEW references', () {
         final context = engine.analyze('''
 CREATE TRIGGER my_trigger BEFORE INSERT ON demo BEGIN
-  SELECT * FROM new;
+  SELECT * FROM demo WHERE id = new.id;
 END;
         ''');
 
@@ -55,16 +54,15 @@ END;
       test("can't use OLD references", () {
         final context = engine.analyze('''
 CREATE TRIGGER my_trigger BEFORE INSERT ON demo BEGIN
-  SELECT * FROM old;
+  SELECT * FROM demo WHERE id = old.id;
 END;
         ''');
 
         expect(
           context.errors,
-          contains(const TypeMatcher<AnalysisError>()
-              .having((e) => e.type, 'type',
-                  AnalysisErrorType.referencedUnknownTable)
-              .having((e) => e.span!.text, 'span.text', 'old')),
+          contains(analysisErrorWith(
+              type: AnalysisErrorType.referencedUnknownTable,
+              lexeme: 'old.id')),
         );
       });
     });
@@ -72,8 +70,8 @@ END;
     test('update can use NEW and OLD references', () {
       final context = engine.analyze('''
 CREATE TRIGGER my_trigger BEFORE UPDATE ON demo BEGIN
-  SELECT * FROM new;
-  INSERT INTO old VALUES (1, 'foo');
+  SELECT * FROM demo WHERE id = new.id;
+  INSERT INTO demo VALUES (1, old.content);
 END;
       ''');
       expect(context.errors, isEmpty);
@@ -89,14 +87,30 @@ END;
       expect(context.errors, isEmpty);
     });
 
-    test('can refer to column in UPDATE OF', () {
+    test("can't use unqualified reference", () {
       final context = engine.analyze('''
 CREATE TRIGGER my_trigger BEFORE DELETE ON DEMO WHEN id < 10 BEGIN
   SELECT * FROM demo;
 END;
       ''');
 
-      expect(context.errors, isEmpty);
+      expect(context.errors, [
+        analysisErrorWith(
+            lexeme: 'id', type: AnalysisErrorType.referencedUnknownColumn)
+      ]);
+    });
+
+    test("can't select from alias", () {
+      final context = engine.analyze('''
+CREATE TRIGGER my_trigger BEFORE DELETE ON demo BEGIN
+  SELECT * FROM old;
+END;
+      ''');
+
+      expect(context.errors, [
+        analysisErrorWith(
+            lexeme: 'old', type: AnalysisErrorType.referencedUnknownTable)
+      ]);
     });
   });
 
@@ -338,5 +352,21 @@ SELECT * FROM cars
   JOIN persons ON persons.id = cars.driver;
 ''');
     query.expectNoError();
+  });
+
+  test('expands star columns', () {
+    final engine = SqlEngine()
+      ..registerTableFromSql('CREATE TABLE foo (bar INTEGER);');
+
+    final result = engine.analyze("SELECT 'client' literal, * FROM foo;");
+    final select = result.root as SelectStatement;
+
+    expect(select.resolvedColumns?.map((e) => e.name), ['literal', 'bar']);
+  });
+
+  test('error for nonexisting table in IN expression', () {
+    final query = engine.analyze('SELECT 1 IN no_such_table');
+    query.expectError('no_such_table',
+        type: AnalysisErrorType.referencedUnknownTable);
   });
 }

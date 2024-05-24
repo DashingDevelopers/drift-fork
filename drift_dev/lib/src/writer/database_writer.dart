@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart' as drift;
 // ignore: implementation_imports
 import 'package:drift/src/runtime/executor/stream_queries.dart';
+import 'package:drift_dev/src/writer/manager/database_manager_writer.dart';
 import 'package:drift_dev/src/writer/utils/memoized_getter.dart';
 import 'package:recase/recase.dart';
 
@@ -145,6 +146,23 @@ class DatabaseWriter {
         dbScope.writeGetterForIncludedDriftFile(import, input.driver!,
             isAccessor: false);
       }
+    }
+
+    // Write the main database manager and, if we're doing a monolithic build,
+    // the manager classes for involved tables.
+    if (scope.options.generateManager) {
+      final managerWriter = DatabaseManagerWriter(scope.child(), dbClassName);
+      for (var table in elements.whereType<DriftTable>()) {
+        managerWriter.addTable(table);
+      }
+      if (!scope.generationOptions.isModular) {
+        managerWriter.writeTableManagers();
+      }
+
+      // Write main class for managers and reference it in a getter from the
+      // database class.
+      managerWriter.writeDatabaseManager();
+      firstLeaf.writeln(managerWriter.databaseManagerGetter);
     }
 
     // Write implementation for query methods

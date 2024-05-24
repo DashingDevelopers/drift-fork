@@ -1,16 +1,47 @@
-import 'dart:html';
-import 'dart:indexed_db';
+import 'dart:async';
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
 import 'package:drift/drift.dart';
 import 'package:drift/remote.dart';
 import 'package:drift/wasm.dart';
-import 'package:js/js_util.dart';
+import 'package:web/web.dart'
+    show
+        Worker,
+        Navigator,
+        StorageManager,
+        IDBFactory,
+        IDBRequest,
+        IDBDatabase,
+        IDBVersionChangeEvent,
+        EventStreamProviders,
+        MessageEvent,
+        FileSystemDirectoryHandle,
+        FileSystemFileHandle,
+        FileSystemHandle,
+        FileSystemSyncAccessHandle,
+        FileSystemGetFileOptions,
+        FileSystemRemoveOptions;
 // ignore: implementation_imports
-import 'package:sqlite3/src/wasm/js_interop/file_system_access.dart';
+import 'package:sqlite3/src/wasm/js_interop/core.dart';
 import 'package:sqlite3/wasm.dart';
+import 'package:stream_channel/stream_channel.dart';
 
-import '../channel.dart';
+import '../new_channel.dart';
 import 'protocol.dart';
+
+@JS('navigator')
+external Navigator get _navigator;
+
+StorageManager? get _storageManager {
+  final navigator = _navigator;
+
+  if (navigator.has('storage')) {
+    return navigator.storage;
+  }
+
+  return null;
+}
 
 /// Checks whether the OPFS API is likely to be correctly implemented in the
 /// current browser.
@@ -18,7 +49,7 @@ import 'protocol.dart';
 /// Since OPFS uses the synchronous file system access API, this method can only
 /// return true when called in a dedicated worker.
 Future<bool> checkOpfsSupport() async {
-  final storage = storageManager;
+  final storage = _storageManager;
   if (storage == null) return false;
 
   const testFileName = '_drift_feature_detection';
@@ -28,18 +59,20 @@ Future<bool> checkOpfsSupport() async {
   FileSystemSyncAccessHandle? openedFile;
 
   try {
-    opfsRoot = await storage.directory;
+    opfsRoot = await storage.getDirectory().toDart;
 
-    fileHandle = await opfsRoot.openFile(testFileName, create: true);
-    openedFile = await fileHandle.createSyncAccessHandle();
+    fileHandle = await opfsRoot
+        .getFileHandle(testFileName, FileSystemGetFileOptions(create: true))
+        .toDart;
+    openedFile = await fileHandle.createSyncAccessHandle().toDart;
 
     // In earlier versions of the OPFS standard, some methods like `getSize()`
     // on a sync file handle have actually been asynchronous. We don't support
     // Browsers that implement the outdated spec.
-    final getSizeResult = callMethod<Object?>(openedFile, 'getSize', []);
-    if (typeofEquals<Object?>(getSizeResult, 'object')) {
+    final getSizeResult = (openedFile as JSObject).callMethod('getSize'.toJS);
+    if (getSizeResult.typeofEquals('object')) {
       // Returned a promise, that's no good.
-      await promiseToFuture<Object?>(getSizeResult!);
+      await (getSizeResult as JSPromise).toDart;
       return false;
     }
 
@@ -52,25 +85,25 @@ Future<bool> checkOpfsSupport() async {
     }
 
     if (opfsRoot != null && fileHandle != null) {
-      await opfsRoot.removeEntry(testFileName);
+      await opfsRoot.removeEntry(testFileName).toDart;
     }
   }
 }
 
 /// Checks whether IndexedDB is working in the current browser.
 Future<bool> checkIndexedDbSupport() async {
-  if (!hasProperty(globalThis, 'indexedDB') ||
+  if (!globalContext.has('indexedDB') ||
       // FileReader needed to read and write blobs efficiently
-      !hasProperty(globalThis, 'FileReader')) {
+      !globalContext.has('FileReader')) {
     return false;
   }
 
-  final idb = getProperty<IdbFactory>(globalThis, 'indexedDB');
+  final idb = globalContext['indexedDB'] as IDBFactory;
 
   try {
     const name = 'drift_mock_db';
 
-    final mockDb = await idb.open(name);
+    final mockDb = await idb.open(name).complete<IDBDatabase>();
     mockDb.close();
     idb.deleteDatabase(name);
   } catch (error) {
@@ -85,22 +118,39 @@ Future<bool> checkIndexedDbExists(String databaseName) async {
   bool? indexedDbExists;
 
   try {
-    final idb = getProperty<IdbFactory>(globalThis, 'indexedDB');
+    final idb = globalContext['indexedDB'] as IDBFactory;
 
-    final database = await idb.open(
-      databaseName,
-      // Current schema version used by the [IndexedDbFileSystem]
-      version: 1,
-      onUpgradeNeeded: (event) {
-        // If there's an upgrade, we're going from 0 to 1 - the database doesn't
-        // exist! Abort the transaction so that we don't create it here.
-        event.target.transaction!.abort();
-        indexedDbExists = false;
-      },
-    );
+    // Instead of the open+abort hack below, see if we can use a newer web API
+    // listing databases instead.
+    if (idb.has('databases')) {
+      final databases = await idb.databases().toDart;
+      for (final entry in databases.toDart) {
+        if (entry.name == databaseName) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    final openRequest = idb.open(databaseName, 1);
+    openRequest.onupgradeneeded = (IDBVersionChangeEvent event) {
+      // If there's an upgrade, we're going from 0 to 1 - the database doesn't
+      // exist! Abort the transaction so that we don't create it here.
+      openRequest.transaction!.abort();
+      indexedDbExists = false;
+    }.toJS;
+    final database = await openRequest.complete<IDBDatabase>();
 
     indexedDbExists ??= true;
     database.close();
+
+    if (indexedDbExists == false) {
+      // We've just created the database in onUpgradeNeeded. We tried to abort
+      // that, but it looks like Safari does the worst possible thing then and
+      // keeps an empty database with an initialized version around.
+      await idb.deleteDatabase(databaseName).complete();
+    }
   } catch (_) {
     // May throw due to us aborting in the upgrade callback.
   }
@@ -110,9 +160,9 @@ Future<bool> checkIndexedDbExists(String databaseName) async {
 
 /// Deletes a database from IndexedDb if supported.
 Future<void> deleteDatabaseInIndexedDb(String databaseName) async {
-  final idb = window.indexedDB;
-  if (idb != null) {
-    await idb.deleteDatabase(databaseName);
+  if (globalContext.has('indexedDB')) {
+    final idb = globalContext['indexedDB'] as IDBFactory;
+    await idb.deleteDatabase(databaseName).complete<JSAny?>();
   }
 }
 
@@ -124,33 +174,38 @@ String pathForOpfs(String databaseName) {
 
 /// Collects all drift OPFS databases.
 Future<List<String>> opfsDatabases() async {
-  final storage = storageManager;
+  final storage = _storageManager;
   if (storage == null) return const [];
 
-  var directory = await storage.directory;
+  var directory = await storage.getDirectory().toDart;
   try {
-    directory = await directory.getDirectory('drift_db');
+    directory = await directory.getDirectoryHandle('drift_db').toDart;
   } on Object {
     // The drift_db folder doesn't exist, so there aren't any databases.
     return const [];
   }
 
+  final entries = AsyncJavaScriptIteratable<JSArray>(directory)
+      .map((data) => data.toDart[1] as FileSystemHandle);
+
   return [
-    await for (final entry in directory.list())
-      if (entry.isDirectory) entry.name,
+    await for (final entry in entries)
+      if (entry.kind == 'directory') entry.name,
   ];
 }
 
 /// Deletes the OPFS folder storing a database with the given [databaseName] if
 /// such folder exists.
 Future<void> deleteDatabaseInOpfs(String databaseName) async {
-  final storage = storageManager;
+  final storage = _storageManager;
   if (storage == null) return;
 
-  var directory = await storage.directory;
+  var directory = await storage.getDirectory().toDart;
   try {
-    directory = await directory.getDirectory('drift_db');
-    await directory.removeEntry(databaseName, recursive: true);
+    directory = await directory.getDirectoryHandle('drift_db').toDart;
+    await directory
+        .removeEntry(databaseName, FileSystemRemoveOptions(recursive: true))
+        .toDart;
   } on Object {
     // fine, an error probably means that the database didn't exist in the first
     // place.
@@ -165,52 +220,107 @@ Future<void> deleteDatabaseInOpfs(String databaseName) async {
 class DriftServerController {
   /// Running drift servers by the name of the database they're serving.
   final Map<String, RunningWasmServer> servers = {};
+  final WasmDatabaseSetup? _setup;
+
+  /// Creates a controller responsible for loading wasm databases and serving
+  /// them. The [_setup] callback will be invoked on created databases if set.
+  DriftServerController(this._setup);
 
   /// Serves a drift connection as requested by the [message].
   void serve(
     ServeDriftDatabase message,
   ) {
     final server = servers.putIfAbsent(message.databaseName, () {
-      final server = DriftServer(LazyDatabase(() async {
-        final sqlite3 = await WasmSqlite3.loadFromUrl(message.sqlite3WasmUri);
+      final initPort = message.initializationPort;
 
-        final vfs = await switch (message.storage) {
-          WasmStorageImplementation.opfsShared =>
-            SimpleOpfsFileSystem.loadFromStorage(
-                pathForOpfs(message.databaseName)),
-          WasmStorageImplementation.opfsLocks =>
-            _loadLockedWasmVfs(message.databaseName),
-          WasmStorageImplementation.unsafeIndexedDb ||
-          WasmStorageImplementation.sharedIndexedDb =>
-            IndexedDbFileSystem.open(dbName: message.databaseName),
-          WasmStorageImplementation.inMemory =>
-            Future.value(InMemoryFileSystem()),
-        };
+      final initializer = initPort != null
+          ? () {
+              final completer = Completer<Uint8List?>();
+              initPort.postMessage(true.toJS);
 
-        final initPort = message.initializationPort;
-        if (vfs.xAccess('/database', 0) == 0 && initPort != null) {
-          initPort.postMessage(true);
+              initPort.onmessage = (MessageEvent e) {
+                final data = (e.data as JSUint8Array?);
+                completer.complete(data?.toDart);
+              }.toJS;
 
-          final response =
-              await initPort.onMessage.map((e) => e.data as Uint8List?).first;
+              return completer.future;
+            }
+          : null;
 
-          if (response != null) {
-            final (file: file, outFlags: _) = vfs.xOpen(
-                Sqlite3Filename('/database'), SqlFlag.SQLITE_OPEN_CREATE);
-            file.xWrite(response, 0);
-            file.xClose();
-          }
-        }
+      final server = DriftServer(LazyDatabase(() => openConnection(
+            sqlite3WasmUri: message.sqlite3WasmUri,
+            databaseName: message.databaseName,
+            storage: message.storage,
+            initializer: initializer,
+            enableMigrations: message.enableMigrations,
+          )));
 
-        sqlite3.registerVirtualFileSystem(vfs, makeDefault: true);
-
-        return WasmDatabase(sqlite3: sqlite3, path: '/database');
-      }));
-
-      return RunningWasmServer(message.storage, server);
+      final wasmServer = RunningWasmServer(message.storage, server);
+      wasmServer.lastClientDisconnected.whenComplete(() {
+        servers.remove(message.databaseName);
+        wasmServer.server.shutdown();
+      });
+      return wasmServer;
     });
 
-    server.server.serve(message.port.channel());
+    server.serve(message.port
+        .channel(explicitClose: message.protocolVersion >= ProtocolVersion.v1));
+  }
+
+  /// Loads a new sqlite3 WASM module, registers an appropriate VFS for [storage]
+  /// and finally opens a database, creating it if it doesn't exist.
+  Future<QueryExecutor> openConnection({
+    required Uri sqlite3WasmUri,
+    required String databaseName,
+    required WasmStorageImplementation storage,
+    required FutureOr<Uint8List?> Function()? initializer,
+    required bool enableMigrations,
+  }) async {
+    final sqlite3 = await WasmSqlite3.loadFromUrl(sqlite3WasmUri);
+
+    VirtualFileSystem vfs;
+    void Function()? close;
+
+    switch (storage) {
+      case WasmStorageImplementation.opfsShared:
+        final simple = vfs = await SimpleOpfsFileSystem.loadFromStorage(
+            pathForOpfs(databaseName));
+        close = simple.close;
+      case WasmStorageImplementation.opfsLocks:
+        final locks = vfs = await _loadLockedWasmVfs(databaseName);
+        close = locks.close;
+      case WasmStorageImplementation.unsafeIndexedDb:
+      case WasmStorageImplementation.sharedIndexedDb:
+        final idb = vfs = await IndexedDbFileSystem.open(dbName: databaseName);
+        close = idb.close;
+      case WasmStorageImplementation.inMemory:
+        vfs = InMemoryFileSystem();
+    }
+
+    if (initializer != null && vfs.xAccess('/database', 0) == 0) {
+      final response = await initializer();
+
+      if (response != null) {
+        final (file: file, outFlags: _) =
+            vfs.xOpen(Sqlite3Filename('/database'), SqlFlag.SQLITE_OPEN_CREATE);
+        file.xWrite(response, 0);
+        file.xClose();
+      }
+    }
+
+    sqlite3.registerVirtualFileSystem(vfs, makeDefault: true);
+    var db = WasmDatabase(
+      sqlite3: sqlite3,
+      path: '/database',
+      setup: _setup,
+      enableMigrations: enableMigrations,
+    );
+
+    if (close != null) {
+      return db.interceptWith(_CloseVfsOnClose(close));
+    } else {
+      return db;
+    }
   }
 
   Future<WasmVfs> _loadLockedWasmVfs(String databaseName) async {
@@ -223,9 +333,23 @@ class DriftServerController {
     StartFileSystemServer(options).sendToWorker(worker);
 
     // Wait for the server worker to report that it's ready
-    await worker.onMessage.first;
+    await EventStreamProviders.messageEvent.forTarget(worker).first;
 
     return WasmVfs(workerOptions: options);
+  }
+}
+
+class _CloseVfsOnClose extends QueryInterceptor {
+  final FutureOr<void> Function() _close;
+
+  _CloseVfsOnClose(this._close);
+
+  @override
+  Future<void> close(QueryExecutor inner) async {
+    await inner.close();
+    if (inner is! TransactionExecutor) {
+      await _close();
+    }
   }
 }
 
@@ -237,8 +361,32 @@ class RunningWasmServer {
   /// The server hosting the drift database.
   final DriftServer server;
 
+  int _connectedClients = 0;
+  final Completer<void> _lastClientDisconnected = Completer.sync();
+
+  /// A future that completes synchronously after all [serve]d connections have
+  /// closed.
+  Future<void> get lastClientDisconnected => _lastClientDisconnected.future;
+
   /// Default constructor
   RunningWasmServer(this.storage, this.server);
+
+  /// Tracks a new connection and serves drift database requests over it.
+  void serve(StreamChannel<Object?> channel) {
+    _connectedClients++;
+
+    server.serve(
+      channel.transformStream(StreamTransformer.fromHandlers(
+        handleDone: (sink) {
+          if (--_connectedClients == 0) {
+            _lastClientDisconnected.complete();
+          }
+
+          sink.close();
+        },
+      )),
+    );
+  }
 }
 
 /// Reported compatibility results with IndexedDB and OPFS.
@@ -264,4 +412,22 @@ extension StorageClassification on WasmStorageImplementation {
   bool get isIndexedDbBased =>
       this == WasmStorageImplementation.sharedIndexedDb ||
       this == WasmStorageImplementation.unsafeIndexedDb;
+}
+
+/// Utilities to complete an IndexedDB request.
+extension CompleteIdbRequest on IDBRequest {
+  /// Turns this request into a Dart future that completes with the first
+  /// success or error event.
+  Future<T> complete<T extends JSAny?>() {
+    final completer = Completer<T>.sync();
+
+    EventStreamProviders.successEvent.forTarget(this).listen((event) {
+      completer.complete(result as T);
+    });
+    EventStreamProviders.errorEvent.forTarget(this).listen((event) {
+      completer.completeError(error ?? event);
+    });
+
+    return completer.future;
+  }
 }

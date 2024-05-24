@@ -45,15 +45,25 @@ class DriftOptions {
       defaultValue: true)
   final bool useColumnNameAsJsonKeyWhenDefinedInMoorFile;
 
+  /// Uses the sql column name as the json key instead of the name in dart.
+  ///
+  /// Overrides [useColumnNameAsJsonKeyWhenDefinedInMoorFile] when set to `true`.
+  @JsonKey(name: 'use_sql_column_name_as_json_key', defaultValue: false)
+  final bool useSqlColumnNameAsJsonKey;
+
   /// Generate a `connect` constructor in database superclasses.
   ///
   /// This makes drift generate a constructor for database classes that takes a
   /// `DatabaseConnection` instead of just a `QueryExecutor` - meaning that
   /// stream queries can also be shared across multiple database instances.
   /// Starting from drift 2.5, the database connection class implements the
-  /// `QueryExecutor` interface, making this option unecessary.
+  /// `QueryExecutor` interface, making this option unnecessary.
   @JsonKey(name: 'generate_connect_constructor', defaultValue: false)
   final bool generateConnectConstructor;
+
+  /// Generate managers to assist with common database operations.
+  @JsonKey(name: 'generate_manager', defaultValue: true)
+  final bool generateManager;
 
   @JsonKey(name: 'sqlite_modules', defaultValue: [])
   @Deprecated('Use effectiveModules instead')
@@ -102,6 +112,12 @@ class DriftOptions {
   @JsonKey(name: 'write_to_columns_mixins', defaultValue: false)
   final bool writeToColumnsMixins;
 
+  @JsonKey(name: 'assume_correct_reference', defaultValue: false)
+  final bool assumeCorrectReference;
+
+  @JsonKey(name: 'has_separate_analyzer', defaultValue: false)
+  final bool hasDriftAnalyzer;
+
   final String? preamble;
 
   @JsonKey(name: 'fatal_warnings', defaultValue: false)
@@ -114,7 +130,9 @@ class DriftOptions {
     this.skipVerificationCode = false,
     this.useDataClassNameForCompanions = false,
     this.useColumnNameAsJsonKeyWhenDefinedInMoorFile = true,
+    this.useSqlColumnNameAsJsonKey = false,
     this.generateConnectConstructor = false,
+    this.generateManager = true,
     this.dataClassToCompanions = true,
     this.generateMutableClasses = false,
     this.rawResultSetData = false,
@@ -131,6 +149,8 @@ class DriftOptions {
     this.preamble,
     this.writeToColumnsMixins = false,
     this.fatalWarnings = false,
+    this.hasDriftAnalyzer = false,
+    this.assumeCorrectReference = false,
   });
 
   DriftOptions({
@@ -139,7 +159,9 @@ class DriftOptions {
     required this.skipVerificationCode,
     required this.useDataClassNameForCompanions,
     required this.useColumnNameAsJsonKeyWhenDefinedInMoorFile,
+    required this.useSqlColumnNameAsJsonKey,
     required this.generateConnectConstructor,
+    required this.generateManager,
     required this.dataClassToCompanions,
     required this.generateMutableClasses,
     required this.rawResultSetData,
@@ -155,6 +177,8 @@ class DriftOptions {
     required this.writeToColumnsMixins,
     required this.fatalWarnings,
     required this.preamble,
+    required this.hasDriftAnalyzer,
+    required this.assumeCorrectReference,
     this.dialect,
   }) {
     // ignore: deprecated_member_use_from_same_package
@@ -390,6 +414,19 @@ enum SqlModule {
   rtree,
 
   spellfix1,
+
+  /// The Geopoly module is an alternative interface to the R-Tree extension
+  /// that uses the GeoJSON notation (RFC-7946)
+  /// to describe two-dimensional polygons.
+  ///
+  /// Geopoly includes functions for detecting
+  /// when one polygon is contained within or overlaps with another,
+  /// for computing the area enclosed by a polygon
+  /// for doing linear transformations of polygons,
+  /// for rendering polygons as SVG, and other similar operations.
+  ///
+  /// See more: https://www.sqlite.org/geopoly.html
+  geopoly,
 }
 
 /// The possible values for the case of the table and column names.

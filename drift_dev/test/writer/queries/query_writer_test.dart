@@ -15,15 +15,15 @@ void main() {
       {DriftOptions options = const DriftOptions.defaults(
         generateNamedParameters: true,
       )}) async {
-    final state =
-        TestBackend.inTest({'a|lib/main.drift': driftFile}, options: options);
+    final state = await TestBackend.inTest({'a|lib/main.drift': driftFile},
+        options: options);
     final file = await state.analyze('package:a/main.drift');
     state.expectNoErrors();
 
     final writer = Writer(
       options,
       generationOptions: GenerationOptions(
-        imports: ImportManagerForPartFiles(),
+        imports: NullImportManager(),
       ),
     );
     QueryWriter(writer.child())

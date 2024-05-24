@@ -112,8 +112,12 @@ class TypeGraph {
           _copyType(resolved, t, other);
         }
       } else if (edge is CopyAndCast) {
-        _copyType(resolved, t, edge.target,
-            this[t]!.cast(edge.cast, edge.dropTypeHint));
+        var copied = this[t]!.cast(edge.cast, edge.dropTypeHint);
+        if (edge.makeNullable) {
+          copied = copied.withNullable(true);
+        }
+
+        _copyType(resolved, t, edge.target, copied);
       } else if (edge is MultiSourceRelation) {
         // handle many-to-one changes, if all targets have been resolved or
         // lax handling is enabled.
@@ -284,12 +288,10 @@ extension ResolvedTypeUtils on ResolvedType {
       case CastMode.numeric:
       case CastMode.numericPreferInt:
         if (type == BasicType.int || type == BasicType.real) {
-          final newHint = dropTypeHint ? null : hint;
-
-          if (newHint != hint) {
+          if (dropTypeHint && hints.isNotEmpty) {
             return ResolvedType(
               type: type,
-              hint: newHint,
+              hints: const [],
               nullable: nullable,
               isArray: isArray,
             );

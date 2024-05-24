@@ -6,7 +6,7 @@ import '../generated/todos.dart';
 import '../test_utils/test_utils.dart';
 
 class _FakeDb extends GeneratedDatabase {
-  _FakeDb(QueryExecutor executor) : super(executor);
+  _FakeDb(super.executor);
 
   @override
   MigrationStrategy get migration {
@@ -72,7 +72,7 @@ void main() {
     final executor = MockExecutor();
     final db = TodoDb(executor);
 
-    await db.someDao.todosForUser(user: 1).get();
+    await db.someDao.todosForUser(user: RowId(1)).get();
 
     verify(executor.runSelect(argThat(contains('SELECT t.* FROM todos')), [1]));
   });

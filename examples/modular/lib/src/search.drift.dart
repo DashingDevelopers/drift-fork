@@ -29,9 +29,10 @@ class SearchInPosts extends i0.Table
   @override
   List<i0.GeneratedColumn> get $columns => [author, content];
   @override
-  String get aliasedName => _alias ?? 'search_in_posts';
+  String get aliasedName => _alias ?? actualTableName;
   @override
-  String get actualTableName => 'search_in_posts';
+  String get actualTableName => $name;
+  static const String $name = 'search_in_posts';
   @override
   i0.VerificationContext validateIntegrity(
       i0.Insertable<i1.SearchInPost> instance,
@@ -201,6 +202,100 @@ class SearchInPostsCompanion extends i0.UpdateCompanion<i1.SearchInPost> {
           ..write(')'))
         .toString();
   }
+}
+
+typedef $SearchInPostsInsertCompanionBuilder = i1.SearchInPostsCompanion
+    Function({
+  required String author,
+  required String content,
+  i0.Value<int> rowid,
+});
+typedef $SearchInPostsUpdateCompanionBuilder = i1.SearchInPostsCompanion
+    Function({
+  i0.Value<String> author,
+  i0.Value<String> content,
+  i0.Value<int> rowid,
+});
+
+class $SearchInPostsTableManager extends i0.RootTableManager<
+    i0.GeneratedDatabase,
+    i1.SearchInPosts,
+    i1.SearchInPost,
+    i1.$SearchInPostsFilterComposer,
+    i1.$SearchInPostsOrderingComposer,
+    $SearchInPostsProcessedTableManager,
+    $SearchInPostsInsertCompanionBuilder,
+    $SearchInPostsUpdateCompanionBuilder> {
+  $SearchInPostsTableManager(i0.GeneratedDatabase db, i1.SearchInPosts table)
+      : super(i0.TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              i1.$SearchInPostsFilterComposer(i0.ComposerState(db, table)),
+          orderingComposer:
+              i1.$SearchInPostsOrderingComposer(i0.ComposerState(db, table)),
+          getChildManagerBuilder: (p) => $SearchInPostsProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            i0.Value<String> author = const i0.Value.absent(),
+            i0.Value<String> content = const i0.Value.absent(),
+            i0.Value<int> rowid = const i0.Value.absent(),
+          }) =>
+              i1.SearchInPostsCompanion(
+            author: author,
+            content: content,
+            rowid: rowid,
+          ),
+          getInsertCompanionBuilder: ({
+            required String author,
+            required String content,
+            i0.Value<int> rowid = const i0.Value.absent(),
+          }) =>
+              i1.SearchInPostsCompanion.insert(
+            author: author,
+            content: content,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $SearchInPostsProcessedTableManager extends i0.ProcessedTableManager<
+    i0.GeneratedDatabase,
+    i1.SearchInPosts,
+    i1.SearchInPost,
+    i1.$SearchInPostsFilterComposer,
+    i1.$SearchInPostsOrderingComposer,
+    $SearchInPostsProcessedTableManager,
+    $SearchInPostsInsertCompanionBuilder,
+    $SearchInPostsUpdateCompanionBuilder> {
+  $SearchInPostsProcessedTableManager(super.$state);
+}
+
+class $SearchInPostsFilterComposer
+    extends i0.FilterComposer<i0.GeneratedDatabase, i1.SearchInPosts> {
+  $SearchInPostsFilterComposer(super.$state);
+  i0.ColumnFilters<String> get author => $state.composableBuilder(
+      column: $state.table.author,
+      builder: (column, joinBuilders) =>
+          i0.ColumnFilters(column, joinBuilders: joinBuilders));
+
+  i0.ColumnFilters<String> get content => $state.composableBuilder(
+      column: $state.table.content,
+      builder: (column, joinBuilders) =>
+          i0.ColumnFilters(column, joinBuilders: joinBuilders));
+}
+
+class $SearchInPostsOrderingComposer
+    extends i0.OrderingComposer<i0.GeneratedDatabase, i1.SearchInPosts> {
+  $SearchInPostsOrderingComposer(super.$state);
+  i0.ColumnOrderings<String> get author => $state.composableBuilder(
+      column: $state.table.author,
+      builder: (column, joinBuilders) =>
+          i0.ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  i0.ColumnOrderings<String> get content => $state.composableBuilder(
+      column: $state.table.content,
+      builder: (column, joinBuilders) =>
+          i0.ColumnOrderings(column, joinBuilders: joinBuilders));
 }
 
 i0.Trigger get postsInsert => i0.Trigger(

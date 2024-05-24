@@ -13,6 +13,7 @@ class DataClassWriter {
   bool get isInsertable => table is DriftTable;
 
   final TextEmitter _emitter;
+
   StringBuffer get _buffer => _emitter.buffer;
 
   DataClassWriter(this.table, this.scope) : _emitter = scope.leaf();
@@ -44,14 +45,15 @@ class DataClassWriter {
   }
 
   void write() {
-    final parentClass = table.customParentClass != null
-        ? _emitter.dartCode(table.customParentClass!)
+    final customParent = table.customParentClass;
+    final parentClass = customParent != null
+        ? _emitter.dartCode(customParent.parentClass)
         : _emitter.drift('DataClass');
     _buffer.write('class ${table.nameOfRowClass} extends $parentClass ');
 
     if (isInsertable) {
       if (scope.options.writeToColumnsMixins) {
-        _buffer.writeln('with ${table.entityInfoName}ToColumns {');
+        _buffer.writeln('with ${table.toColumnsMixin} {');
       } else {
         // The data class is only an insertable if we can actually insert rows
         // into the target entity.
@@ -76,8 +78,8 @@ class DataClassWriter {
     }
 
     // write constructor with named optional fields
-
-    if (!scope.options.generateMutableClasses) {
+    if (!scope.options.generateMutableClasses &&
+        customParent?.isConst != false) {
       _buffer.write('const ');
     }
     _emitter
@@ -142,7 +144,7 @@ class DataClassWriter {
 
     for (final column in columns) {
       final getter = column.nameInDart;
-      final jsonKey = column.getJsonKey(scope.options);
+      final jsonKeyString = asDartLiteral(column.getJsonKey(scope.options));
       String deserialized;
 
       final typeConverter = column.typeConverter;
@@ -153,13 +155,14 @@ class DataClassWriter {
           type = '$type?';
         }
 
-        final fromConverter = "serializer.fromJson<$type>(json['$jsonKey'])";
+        final fromConverter =
+            "serializer.fromJson<$type>(json[$jsonKeyString])";
         final converterField = _converter(column);
         deserialized = '$converterField.fromJson($fromConverter)';
       } else {
         final type = _columnType(column);
 
-        deserialized = "serializer.fromJson<$type>(json['$jsonKey'])";
+        deserialized = "serializer.fromJson<$type>(json[$jsonKeyString])";
       }
 
       _buffer.write('$getter: $deserialized,');
@@ -185,7 +188,7 @@ class DataClassWriter {
         'return <String, dynamic>{\n');
 
     for (final column in columns) {
-      final name = column.getJsonKey(scope.options);
+      final nameLiteral = asDartLiteral(column.getJsonKey(scope.options));
       final getter = column.nameInDart;
       final needsThis = getter == 'serializer';
       var value = needsThis ? 'this.$getter' : getter;
@@ -198,7 +201,7 @@ class DataClassWriter {
         dartType = _jsonType(column);
       }
 
-      _buffer.write("'$name': serializer.toJson<$dartType>($value),");
+      _buffer.write("$nameLiteral: serializer.toJson<$dartType>($value),");
     }
 
     _buffer.write('};}');
@@ -339,7 +342,14 @@ class RowMappingWriter {
       final columnName = column.nameInSql;
       final rawData = "data['\${effectivePrefix}$columnName']";
 
-      final sqlType = writer.drift(column.sqlType.toString());
+      final String sqlType;
+      switch (column.sqlType) {
+        case ColumnDriftType():
+          sqlType = writer.drift(column.sqlType.builtin.toString());
+        case ColumnCustomType(:final custom):
+          sqlType = writer.dartCode(custom.expression);
+      }
+
       var loadType = '$databaseGetter.typeMapping.read($sqlType, $rawData)';
 
       if (!column.nullable) {
@@ -379,7 +389,6 @@ class RowMappingWriter {
 extension WriteToColumns on TextEmitter {
   void writeToColumnsOverride(Iterable<DriftColumn> columns) {
     final expression = drift('Expression');
-    final variable = drift('Variable');
 
     this
       ..write('@override\nMap<String, $expression> toColumns'
@@ -401,28 +410,10 @@ extension WriteToColumns on TextEmitter {
       }
       if (needsScope) write('{');
 
-      final typeName = dartCode(variableTypeCode(column, nullable: false));
-      final mapSetter = 'map[${asDartLiteral(column.nameInSql)}] = '
-          '$variable<$typeName>';
-
-      if (column.typeConverter != null) {
-        // apply type converter before writing the variable
-        final converter = column.typeConverter!;
-
-        this
-          ..write('final converter = ')
-          ..writeDart(readConverter(converter, forNullable: column.nullable))
-          ..writeln(';')
-          ..write(mapSetter)
-          ..write('(converter.toSql(${column.nameInDart}));');
-      } else {
-        // no type converter. Write variable directly
-        this
-          ..write(mapSetter)
-          ..write('(')
-          ..write(column.nameInDart)
-          ..write(');');
-      }
+      write('map[${asDartLiteral(column.nameInSql)}] = ');
+      writeDart(
+          wrapInVariable(column, AnnotatedDartCode.text(column.nameInDart)));
+      writeln(';');
 
       // This one closes the optional if from before.
       if (needsScope) write('}');

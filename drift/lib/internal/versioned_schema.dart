@@ -103,6 +103,16 @@ abstract base class VersionedSchema {
       final newVersion = await steps(target, database);
       assert(newVersion > target);
 
+      // Saving the schema version after each step prevents the schema of the
+      // database diverging from what's stored in `user_version` if a migration
+      // fails halfway.
+      // We can only reliably do this for sqlite3 at the moment since managing
+      // schema versions happens at a lower layer and is not current exposed to
+      // the query builder.
+      if (database.executor.dialect == SqlDialect.sqlite) {
+        await database.customStatement('pragma user_version = $newVersion');
+      }
+
       target = newVersion;
     }
   }
@@ -213,9 +223,9 @@ class VersionedVirtualTable extends VersionedTable
   /// Create a virtual table by copying fields from [source] and applying a
   /// [alias] to columns.
   VersionedVirtualTable.aliased(
-      {required VersionedVirtualTable source, required String? alias})
+      {required VersionedVirtualTable super.source, required super.alias})
       : moduleAndArgs = source.moduleAndArgs,
-        super.aliased(source: source, alias: alias);
+        super.aliased();
 
   @override
   VersionedVirtualTable createAlias(String alias) {
