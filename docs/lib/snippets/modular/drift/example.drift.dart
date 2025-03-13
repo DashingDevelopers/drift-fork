@@ -1,7 +1,489 @@
+// dart format width=80
 // ignore_for_file: type=lint
 import 'package:drift/drift.dart' as i0;
 import 'package:drift_docs/snippets/modular/drift/example.drift.dart' as i1;
 import 'package:drift/internal/modular.dart' as i2;
+
+typedef $TodosCreateCompanionBuilder = i1.TodosCompanion Function({
+  i0.Value<int> id,
+  required String title,
+  required String content,
+  i0.Value<int?> category,
+});
+typedef $TodosUpdateCompanionBuilder = i1.TodosCompanion Function({
+  i0.Value<int> id,
+  i0.Value<String> title,
+  i0.Value<String> content,
+  i0.Value<int?> category,
+});
+
+final class $TodosReferences
+    extends i0.BaseReferences<i0.GeneratedDatabase, i1.Todos, i1.Todo> {
+  $TodosReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static i1.Categories _categoryTable(i0.GeneratedDatabase db) =>
+      i2.ReadDatabaseContainer(db)
+          .resultSet<i1.Categories>('categories')
+          .createAlias(i0.$_aliasNameGenerator(
+              i2.ReadDatabaseContainer(db)
+                  .resultSet<i1.Todos>('todos')
+                  .category,
+              i2.ReadDatabaseContainer(db)
+                  .resultSet<i1.Categories>('categories')
+                  .id));
+
+  i1.$CategoriesProcessedTableManager? get category {
+    final $_column = $_itemColumn<int>('category');
+    if ($_column == null) return null;
+    final manager = i1
+        .$CategoriesTableManager(
+            $_db,
+            i2.ReadDatabaseContainer($_db)
+                .resultSet<i1.Categories>('categories'))
+        .filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_categoryTable($_db));
+    if (item == null) return manager;
+    return i0.ProcessedTableManager(
+        manager.$state.copyWith(prefetchedData: [item]));
+  }
+}
+
+class $TodosFilterComposer extends i0.Composer<i0.GeneratedDatabase, i1.Todos> {
+  $TodosFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  i0.ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => i0.ColumnFilters(column));
+
+  i0.ColumnFilters<String> get title => $composableBuilder(
+      column: $table.title, builder: (column) => i0.ColumnFilters(column));
+
+  i0.ColumnFilters<String> get content => $composableBuilder(
+      column: $table.content, builder: (column) => i0.ColumnFilters(column));
+
+  i1.$CategoriesFilterComposer get category {
+    final i1.$CategoriesFilterComposer composer = $composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.category,
+        referencedTable: i2.ReadDatabaseContainer($db)
+            .resultSet<i1.Categories>('categories'),
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder,
+                {$addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer}) =>
+            i1.$CategoriesFilterComposer(
+              $db: $db,
+              $table: i2.ReadDatabaseContainer($db)
+                  .resultSet<i1.Categories>('categories'),
+              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+              joinBuilder: joinBuilder,
+              $removeJoinBuilderFromRootComposer:
+                  $removeJoinBuilderFromRootComposer,
+            ));
+    return composer;
+  }
+}
+
+class $TodosOrderingComposer
+    extends i0.Composer<i0.GeneratedDatabase, i1.Todos> {
+  $TodosOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  i0.ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => i0.ColumnOrderings(column));
+
+  i0.ColumnOrderings<String> get title => $composableBuilder(
+      column: $table.title, builder: (column) => i0.ColumnOrderings(column));
+
+  i0.ColumnOrderings<String> get content => $composableBuilder(
+      column: $table.content, builder: (column) => i0.ColumnOrderings(column));
+
+  i1.$CategoriesOrderingComposer get category {
+    final i1.$CategoriesOrderingComposer composer = $composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.category,
+        referencedTable: i2.ReadDatabaseContainer($db)
+            .resultSet<i1.Categories>('categories'),
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder,
+                {$addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer}) =>
+            i1.$CategoriesOrderingComposer(
+              $db: $db,
+              $table: i2.ReadDatabaseContainer($db)
+                  .resultSet<i1.Categories>('categories'),
+              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+              joinBuilder: joinBuilder,
+              $removeJoinBuilderFromRootComposer:
+                  $removeJoinBuilderFromRootComposer,
+            ));
+    return composer;
+  }
+}
+
+class $TodosAnnotationComposer
+    extends i0.Composer<i0.GeneratedDatabase, i1.Todos> {
+  $TodosAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  i0.GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  i0.GeneratedColumn<String> get title =>
+      $composableBuilder(column: $table.title, builder: (column) => column);
+
+  i0.GeneratedColumn<String> get content =>
+      $composableBuilder(column: $table.content, builder: (column) => column);
+
+  i1.$CategoriesAnnotationComposer get category {
+    final i1.$CategoriesAnnotationComposer composer = $composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.category,
+        referencedTable: i2.ReadDatabaseContainer($db)
+            .resultSet<i1.Categories>('categories'),
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder,
+                {$addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer}) =>
+            i1.$CategoriesAnnotationComposer(
+              $db: $db,
+              $table: i2.ReadDatabaseContainer($db)
+                  .resultSet<i1.Categories>('categories'),
+              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+              joinBuilder: joinBuilder,
+              $removeJoinBuilderFromRootComposer:
+                  $removeJoinBuilderFromRootComposer,
+            ));
+    return composer;
+  }
+}
+
+class $TodosTableManager extends i0.RootTableManager<
+    i0.GeneratedDatabase,
+    i1.Todos,
+    i1.Todo,
+    i1.$TodosFilterComposer,
+    i1.$TodosOrderingComposer,
+    i1.$TodosAnnotationComposer,
+    $TodosCreateCompanionBuilder,
+    $TodosUpdateCompanionBuilder,
+    (i1.Todo, i1.$TodosReferences),
+    i1.Todo,
+    i0.PrefetchHooks Function({bool category})> {
+  $TodosTableManager(i0.GeneratedDatabase db, i1.Todos table)
+      : super(i0.TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              i1.$TodosFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              i1.$TodosOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              i1.$TodosAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            i0.Value<int> id = const i0.Value.absent(),
+            i0.Value<String> title = const i0.Value.absent(),
+            i0.Value<String> content = const i0.Value.absent(),
+            i0.Value<int?> category = const i0.Value.absent(),
+          }) =>
+              i1.TodosCompanion(
+            id: id,
+            title: title,
+            content: content,
+            category: category,
+          ),
+          createCompanionCallback: ({
+            i0.Value<int> id = const i0.Value.absent(),
+            required String title,
+            required String content,
+            i0.Value<int?> category = const i0.Value.absent(),
+          }) =>
+              i1.TodosCompanion.insert(
+            id: id,
+            title: title,
+            content: content,
+            category: category,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) =>
+                  (e.readTable(table), i1.$TodosReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: ({category = false}) {
+            return i0.PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins: <
+                  T extends i0.TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic>>(state) {
+                if (category) {
+                  state = state.withJoin(
+                    currentTable: table,
+                    currentColumn: table.category,
+                    referencedTable: i1.$TodosReferences._categoryTable(db),
+                    referencedColumn: i1.$TodosReferences._categoryTable(db).id,
+                  ) as T;
+                }
+
+                return state;
+              },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ));
+}
+
+typedef $TodosProcessedTableManager = i0.ProcessedTableManager<
+    i0.GeneratedDatabase,
+    i1.Todos,
+    i1.Todo,
+    i1.$TodosFilterComposer,
+    i1.$TodosOrderingComposer,
+    i1.$TodosAnnotationComposer,
+    $TodosCreateCompanionBuilder,
+    $TodosUpdateCompanionBuilder,
+    (i1.Todo, i1.$TodosReferences),
+    i1.Todo,
+    i0.PrefetchHooks Function({bool category})>;
+typedef $CategoriesCreateCompanionBuilder = i1.CategoriesCompanion Function({
+  i0.Value<int> id,
+  required String description,
+});
+typedef $CategoriesUpdateCompanionBuilder = i1.CategoriesCompanion Function({
+  i0.Value<int> id,
+  i0.Value<String> description,
+});
+
+final class $CategoriesReferences extends i0
+    .BaseReferences<i0.GeneratedDatabase, i1.Categories, i1.Category> {
+  $CategoriesReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static i0.MultiTypedResultKey<i1.Todos, List<i1.Todo>> _todosRefsTable(
+          i0.GeneratedDatabase db) =>
+      i0.MultiTypedResultKey.fromTable(
+          i2.ReadDatabaseContainer(db).resultSet<i1.Todos>('todos'),
+          aliasName: i0.$_aliasNameGenerator(
+              i2.ReadDatabaseContainer(db)
+                  .resultSet<i1.Categories>('categories')
+                  .id,
+              i2.ReadDatabaseContainer(db)
+                  .resultSet<i1.Todos>('todos')
+                  .category));
+
+  i1.$TodosProcessedTableManager get todosRefs {
+    final manager = i1
+        .$TodosTableManager(
+            $_db, i2.ReadDatabaseContainer($_db).resultSet<i1.Todos>('todos'))
+        .filter((f) => f.category.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_todosRefsTable($_db));
+    return i0.ProcessedTableManager(
+        manager.$state.copyWith(prefetchedData: cache));
+  }
+}
+
+class $CategoriesFilterComposer
+    extends i0.Composer<i0.GeneratedDatabase, i1.Categories> {
+  $CategoriesFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  i0.ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => i0.ColumnFilters(column));
+
+  i0.ColumnFilters<String> get description => $composableBuilder(
+      column: $table.description,
+      builder: (column) => i0.ColumnFilters(column));
+
+  i0.Expression<bool> todosRefs(
+      i0.Expression<bool> Function(i1.$TodosFilterComposer f) f) {
+    final i1.$TodosFilterComposer composer = $composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.id,
+        referencedTable:
+            i2.ReadDatabaseContainer($db).resultSet<i1.Todos>('todos'),
+        getReferencedColumn: (t) => t.category,
+        builder: (joinBuilder,
+                {$addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer}) =>
+            i1.$TodosFilterComposer(
+              $db: $db,
+              $table:
+                  i2.ReadDatabaseContainer($db).resultSet<i1.Todos>('todos'),
+              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+              joinBuilder: joinBuilder,
+              $removeJoinBuilderFromRootComposer:
+                  $removeJoinBuilderFromRootComposer,
+            ));
+    return f(composer);
+  }
+}
+
+class $CategoriesOrderingComposer
+    extends i0.Composer<i0.GeneratedDatabase, i1.Categories> {
+  $CategoriesOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  i0.ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => i0.ColumnOrderings(column));
+
+  i0.ColumnOrderings<String> get description => $composableBuilder(
+      column: $table.description,
+      builder: (column) => i0.ColumnOrderings(column));
+}
+
+class $CategoriesAnnotationComposer
+    extends i0.Composer<i0.GeneratedDatabase, i1.Categories> {
+  $CategoriesAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  i0.GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  i0.GeneratedColumn<String> get description => $composableBuilder(
+      column: $table.description, builder: (column) => column);
+
+  i0.Expression<T> todosRefs<T extends Object>(
+      i0.Expression<T> Function(i1.$TodosAnnotationComposer a) f) {
+    final i1.$TodosAnnotationComposer composer = $composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.id,
+        referencedTable:
+            i2.ReadDatabaseContainer($db).resultSet<i1.Todos>('todos'),
+        getReferencedColumn: (t) => t.category,
+        builder: (joinBuilder,
+                {$addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer}) =>
+            i1.$TodosAnnotationComposer(
+              $db: $db,
+              $table:
+                  i2.ReadDatabaseContainer($db).resultSet<i1.Todos>('todos'),
+              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+              joinBuilder: joinBuilder,
+              $removeJoinBuilderFromRootComposer:
+                  $removeJoinBuilderFromRootComposer,
+            ));
+    return f(composer);
+  }
+}
+
+class $CategoriesTableManager extends i0.RootTableManager<
+    i0.GeneratedDatabase,
+    i1.Categories,
+    i1.Category,
+    i1.$CategoriesFilterComposer,
+    i1.$CategoriesOrderingComposer,
+    i1.$CategoriesAnnotationComposer,
+    $CategoriesCreateCompanionBuilder,
+    $CategoriesUpdateCompanionBuilder,
+    (i1.Category, i1.$CategoriesReferences),
+    i1.Category,
+    i0.PrefetchHooks Function({bool todosRefs})> {
+  $CategoriesTableManager(i0.GeneratedDatabase db, i1.Categories table)
+      : super(i0.TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              i1.$CategoriesFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              i1.$CategoriesOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              i1.$CategoriesAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            i0.Value<int> id = const i0.Value.absent(),
+            i0.Value<String> description = const i0.Value.absent(),
+          }) =>
+              i1.CategoriesCompanion(
+            id: id,
+            description: description,
+          ),
+          createCompanionCallback: ({
+            i0.Value<int> id = const i0.Value.absent(),
+            required String description,
+          }) =>
+              i1.CategoriesCompanion.insert(
+            id: id,
+            description: description,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) =>
+                  (e.readTable(table), i1.$CategoriesReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: ({todosRefs = false}) {
+            return i0.PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [
+                if (todosRefs)
+                  i2.ReadDatabaseContainer(db).resultSet<i1.Todos>('todos')
+              ],
+              addJoins: null,
+              getPrefetchedDataCallback: (items) async {
+                return [
+                  if (todosRefs)
+                    await i0.$_getPrefetchedData<i1.Category, i1.Categories,
+                            i1.Todo>(
+                        currentTable: table,
+                        referencedTable:
+                            i1.$CategoriesReferences._todosRefsTable(db),
+                        managerFromTypedResult: (p0) =>
+                            i1.$CategoriesReferences(db, table, p0).todosRefs,
+                        referencedItemsForCurrentItem: (item,
+                                referencedItems) =>
+                            referencedItems.where((e) => e.category == item.id),
+                        typedResults: items)
+                ];
+              },
+            );
+          },
+        ));
+}
+
+typedef $CategoriesProcessedTableManager = i0.ProcessedTableManager<
+    i0.GeneratedDatabase,
+    i1.Categories,
+    i1.Category,
+    i1.$CategoriesFilterComposer,
+    i1.$CategoriesOrderingComposer,
+    i1.$CategoriesAnnotationComposer,
+    $CategoriesCreateCompanionBuilder,
+    $CategoriesUpdateCompanionBuilder,
+    (i1.Category, i1.$CategoriesReferences),
+    i1.Category,
+    i0.PrefetchHooks Function({bool todosRefs})>;
 
 class Todos extends i0.Table with i0.TableInfo<Todos, i1.Todo> {
   @override
@@ -161,6 +643,15 @@ class Todo extends i0.DataClass implements i0.Insertable<i1.Todo> {
         content: content ?? this.content,
         category: category.present ? category.value : this.category,
       );
+  Todo copyWithCompanion(i1.TodosCompanion data) {
+    return Todo(
+      id: data.id.present ? data.id.value : this.id,
+      title: data.title.present ? data.title.value : this.title,
+      content: data.content.present ? data.content.value : this.content,
+      category: data.category.present ? data.category.value : this.category,
+    );
+  }
+
   @override
   String toString() {
     return (StringBuffer('Todo(')
@@ -256,148 +747,6 @@ class TodosCompanion extends i0.UpdateCompanion<i1.Todo> {
           ..write('category: $category')
           ..write(')'))
         .toString();
-  }
-}
-
-typedef $TodosInsertCompanionBuilder = i1.TodosCompanion Function({
-  i0.Value<int> id,
-  required String title,
-  required String content,
-  i0.Value<int?> category,
-});
-typedef $TodosUpdateCompanionBuilder = i1.TodosCompanion Function({
-  i0.Value<int> id,
-  i0.Value<String> title,
-  i0.Value<String> content,
-  i0.Value<int?> category,
-});
-
-class $TodosTableManager extends i0.RootTableManager<
-    i0.GeneratedDatabase,
-    i1.Todos,
-    i1.Todo,
-    i1.$TodosFilterComposer,
-    i1.$TodosOrderingComposer,
-    $TodosProcessedTableManager,
-    $TodosInsertCompanionBuilder,
-    $TodosUpdateCompanionBuilder> {
-  $TodosTableManager(i0.GeneratedDatabase db, i1.Todos table)
-      : super(i0.TableManagerState(
-          db: db,
-          table: table,
-          filteringComposer:
-              i1.$TodosFilterComposer(i0.ComposerState(db, table)),
-          orderingComposer:
-              i1.$TodosOrderingComposer(i0.ComposerState(db, table)),
-          getChildManagerBuilder: (p) => $TodosProcessedTableManager(p),
-          getUpdateCompanionBuilder: ({
-            i0.Value<int> id = const i0.Value.absent(),
-            i0.Value<String> title = const i0.Value.absent(),
-            i0.Value<String> content = const i0.Value.absent(),
-            i0.Value<int?> category = const i0.Value.absent(),
-          }) =>
-              i1.TodosCompanion(
-            id: id,
-            title: title,
-            content: content,
-            category: category,
-          ),
-          getInsertCompanionBuilder: ({
-            i0.Value<int> id = const i0.Value.absent(),
-            required String title,
-            required String content,
-            i0.Value<int?> category = const i0.Value.absent(),
-          }) =>
-              i1.TodosCompanion.insert(
-            id: id,
-            title: title,
-            content: content,
-            category: category,
-          ),
-        ));
-}
-
-class $TodosProcessedTableManager extends i0.ProcessedTableManager<
-    i0.GeneratedDatabase,
-    i1.Todos,
-    i1.Todo,
-    i1.$TodosFilterComposer,
-    i1.$TodosOrderingComposer,
-    $TodosProcessedTableManager,
-    $TodosInsertCompanionBuilder,
-    $TodosUpdateCompanionBuilder> {
-  $TodosProcessedTableManager(super.$state);
-}
-
-class $TodosFilterComposer
-    extends i0.FilterComposer<i0.GeneratedDatabase, i1.Todos> {
-  $TodosFilterComposer(super.$state);
-  i0.ColumnFilters<int> get id => $state.composableBuilder(
-      column: $state.table.id,
-      builder: (column, joinBuilders) =>
-          i0.ColumnFilters(column, joinBuilders: joinBuilders));
-
-  i0.ColumnFilters<String> get title => $state.composableBuilder(
-      column: $state.table.title,
-      builder: (column, joinBuilders) =>
-          i0.ColumnFilters(column, joinBuilders: joinBuilders));
-
-  i0.ColumnFilters<String> get content => $state.composableBuilder(
-      column: $state.table.content,
-      builder: (column, joinBuilders) =>
-          i0.ColumnFilters(column, joinBuilders: joinBuilders));
-
-  i1.$CategoriesFilterComposer get category {
-    final i1.$CategoriesFilterComposer composer = $state.composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.category,
-        referencedTable: i2.ReadDatabaseContainer($state.db)
-            .resultSet<i1.Categories>('categories'),
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder, parentComposers) => i1.$CategoriesFilterComposer(
-            i0.ComposerState(
-                $state.db,
-                i2.ReadDatabaseContainer($state.db)
-                    .resultSet<i1.Categories>('categories'),
-                joinBuilder,
-                parentComposers)));
-    return composer;
-  }
-}
-
-class $TodosOrderingComposer
-    extends i0.OrderingComposer<i0.GeneratedDatabase, i1.Todos> {
-  $TodosOrderingComposer(super.$state);
-  i0.ColumnOrderings<int> get id => $state.composableBuilder(
-      column: $state.table.id,
-      builder: (column, joinBuilders) =>
-          i0.ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  i0.ColumnOrderings<String> get title => $state.composableBuilder(
-      column: $state.table.title,
-      builder: (column, joinBuilders) =>
-          i0.ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  i0.ColumnOrderings<String> get content => $state.composableBuilder(
-      column: $state.table.content,
-      builder: (column, joinBuilders) =>
-          i0.ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  i1.$CategoriesOrderingComposer get category {
-    final i1.$CategoriesOrderingComposer composer = $state.composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.category,
-        referencedTable: i2.ReadDatabaseContainer($state.db)
-            .resultSet<i1.Categories>('categories'),
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder, parentComposers) =>
-            i1.$CategoriesOrderingComposer(i0.ComposerState(
-                $state.db,
-                i2.ReadDatabaseContainer($state.db)
-                    .resultSet<i1.Categories>('categories'),
-                joinBuilder,
-                parentComposers)));
-    return composer;
   }
 }
 
@@ -508,6 +857,14 @@ class Category extends i0.DataClass implements i0.Insertable<i1.Category> {
         id: id ?? this.id,
         description: description ?? this.description,
       );
+  Category copyWithCompanion(i1.CategoriesCompanion data) {
+    return Category(
+      id: data.id.present ? data.id.value : this.id,
+      description:
+          data.description.present ? data.description.value : this.description,
+    );
+  }
+
   @override
   String toString() {
     return (StringBuffer('Category(')
@@ -578,92 +935,6 @@ class CategoriesCompanion extends i0.UpdateCompanion<i1.Category> {
   }
 }
 
-typedef $CategoriesInsertCompanionBuilder = i1.CategoriesCompanion Function({
-  i0.Value<int> id,
-  required String description,
-});
-typedef $CategoriesUpdateCompanionBuilder = i1.CategoriesCompanion Function({
-  i0.Value<int> id,
-  i0.Value<String> description,
-});
-
-class $CategoriesTableManager extends i0.RootTableManager<
-    i0.GeneratedDatabase,
-    i1.Categories,
-    i1.Category,
-    i1.$CategoriesFilterComposer,
-    i1.$CategoriesOrderingComposer,
-    $CategoriesProcessedTableManager,
-    $CategoriesInsertCompanionBuilder,
-    $CategoriesUpdateCompanionBuilder> {
-  $CategoriesTableManager(i0.GeneratedDatabase db, i1.Categories table)
-      : super(i0.TableManagerState(
-          db: db,
-          table: table,
-          filteringComposer:
-              i1.$CategoriesFilterComposer(i0.ComposerState(db, table)),
-          orderingComposer:
-              i1.$CategoriesOrderingComposer(i0.ComposerState(db, table)),
-          getChildManagerBuilder: (p) => $CategoriesProcessedTableManager(p),
-          getUpdateCompanionBuilder: ({
-            i0.Value<int> id = const i0.Value.absent(),
-            i0.Value<String> description = const i0.Value.absent(),
-          }) =>
-              i1.CategoriesCompanion(
-            id: id,
-            description: description,
-          ),
-          getInsertCompanionBuilder: ({
-            i0.Value<int> id = const i0.Value.absent(),
-            required String description,
-          }) =>
-              i1.CategoriesCompanion.insert(
-            id: id,
-            description: description,
-          ),
-        ));
-}
-
-class $CategoriesProcessedTableManager extends i0.ProcessedTableManager<
-    i0.GeneratedDatabase,
-    i1.Categories,
-    i1.Category,
-    i1.$CategoriesFilterComposer,
-    i1.$CategoriesOrderingComposer,
-    $CategoriesProcessedTableManager,
-    $CategoriesInsertCompanionBuilder,
-    $CategoriesUpdateCompanionBuilder> {
-  $CategoriesProcessedTableManager(super.$state);
-}
-
-class $CategoriesFilterComposer
-    extends i0.FilterComposer<i0.GeneratedDatabase, i1.Categories> {
-  $CategoriesFilterComposer(super.$state);
-  i0.ColumnFilters<int> get id => $state.composableBuilder(
-      column: $state.table.id,
-      builder: (column, joinBuilders) =>
-          i0.ColumnFilters(column, joinBuilders: joinBuilders));
-
-  i0.ColumnFilters<String> get description => $state.composableBuilder(
-      column: $state.table.description,
-      builder: (column, joinBuilders) =>
-          i0.ColumnFilters(column, joinBuilders: joinBuilders));
-}
-
-class $CategoriesOrderingComposer
-    extends i0.OrderingComposer<i0.GeneratedDatabase, i1.Categories> {
-  $CategoriesOrderingComposer(super.$state);
-  i0.ColumnOrderings<int> get id => $state.composableBuilder(
-      column: $state.table.id,
-      builder: (column, joinBuilders) =>
-          i0.ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  i0.ColumnOrderings<String> get description => $state.composableBuilder(
-      column: $state.table.description,
-      builder: (column, joinBuilders) =>
-          i0.ColumnOrderings(column, joinBuilders: joinBuilders));
-}
-
 class ExampleDrift extends i2.ModularAccessor {
   ExampleDrift(i0.GeneratedDatabase db) : super(db);
   i0.Selectable<i1.Todo> filterTodos(FilterTodos$predicate predicate) {
@@ -697,7 +968,8 @@ class ExampleDrift extends i2.ModularAccessor {
         }).asyncMap(todos.mapFromRow);
   }
 
-  i1.Todos get todos => this.resultSet<i1.Todos>('todos');
+  i1.Todos get todos =>
+      i2.ReadDatabaseContainer(attachedDatabase).resultSet<i1.Todos>('todos');
 }
 
 typedef FilterTodos$predicate = i0.Expression<bool> Function(i1.Todos todos);

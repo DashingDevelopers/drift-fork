@@ -4,7 +4,7 @@ import 'package:test/test.dart';
 import 'utils.dart';
 
 ColonVariableToken _colon(String name) {
-  return ColonVariableToken(fakeSpan(name), name);
+  return ColonVariableToken(fakeSpan(':$name'), name);
 }
 
 void main() {
@@ -14,7 +14,7 @@ void main() {
         when: BinaryExpression(
           NumericLiteral(1),
           token(TokenType.equal),
-          ColonNamedVariable(_colon(':isReviewFolderSelected')),
+          NamedVariable(_colon('isReviewFolderSelected')),
         ),
         then: IsExpression(
           true,
@@ -33,7 +33,7 @@ void main() {
   final folderExpr = BinaryExpression(
     Reference(entityName: 'n', columnName: 'folderId'),
     token(TokenType.equal),
-    ColonNamedVariable(_colon(':selectedFolderId')),
+    NamedVariable(_colon('selectedFolderId')),
   );
 
   test('repro 1', () {

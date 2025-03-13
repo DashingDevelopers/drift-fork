@@ -18,7 +18,8 @@ String dataClassNameForClassName(String tableName) {
     if (tableName.endsWith('ss') ||
         tableName.endsWith('us') ||
         tableName.endsWith('sses')) {
-      return tableName;
+      // No singular form is trivally recoverable here
+      return '${tableName}Data';
     } else if (tableName.endsWith('ies')) {
       return '${tableName.substring(0, tableName.length - 3)}y';
     } else {
@@ -86,12 +87,12 @@ CustomParentClass? parseCustomParentClass(
         if (genericType.isDartCoreObject || genericType is DynamicType) {
           code = AnnotatedDartCode([
             DartTopLevelSymbol.topLevelElement(extendingType.element),
-            '<',
+            const DartLexeme('<'),
             DartTopLevelSymbol(
               dartTypeName ?? dataClassNameForClassName(element.name),
               null,
             ),
-            '>',
+            const DartLexeme('>'),
           ]);
         } else {
           resolver.reportError(

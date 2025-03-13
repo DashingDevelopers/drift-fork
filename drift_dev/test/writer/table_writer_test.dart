@@ -126,4 +126,91 @@ class Tags extends Table {
       ),
     }, result.dartOutputs, result.writer);
   });
+
+  test(
+    'does not generate integrity check method when every column has a type converter',
+    () async {
+      final result = await emulateDriftBuild(
+        inputs: {
+          'a|lib/a.dart': '''
+import 'package:drift/drift.dart';
+
+enum Fruit {
+  apple,
+  pear,
+}
+class Foo extends Table {
+  Column<String> get fruit => textEnum<Fruit>()
+    .withDefault(const Variable('apple'))();
+}
+''',
+        },
+        modularBuild: true,
+      );
+
+      checkOutputs({
+        'a|lib/a.drift.dart':
+            decodedMatches(isNot(contains('instance.toColumns(true);'))),
+      }, result.dartOutputs, result.writer);
+    },
+  );
+
+  test('can have nullable JSON type for null-skipping converter', () async {
+    // Regression test for https://github.com/simolus3/drift/issues/3436
+    final result = await emulateDriftBuild(
+      inputs: {
+        'a|lib/a.dart': '''
+import 'package:drift/drift.dart';
+
+class TodoItems extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get author => text().nullable().map(Author.typeConverter)();
+}
+
+class Author {
+  const Author({
+    required this.name,
+  });
+
+  final String name;
+
+  static JsonTypeConverter2<Author, String, Object?> typeConverter = TypeConverter.json2(
+    fromJson: (json) => Author(name: (json! as Map<String, Object?>)['name'] as String),
+    toJson: (entries) => {'name': entries.name},
+  );
+}
+''',
+      },
+      modularBuild: true,
+    );
+
+    checkOutputs({
+      'a|lib/a.drift.dart': decodedMatches(isNot(contains('Object??'))),
+    }, result.dartOutputs, result.writer);
+  });
+
+  test('does not write unecessary verification metas', () async {
+    final result = await emulateDriftBuild(inputs: {
+      'a|lib/a.dart': '''
+import 'package:drift/drift.dart';
+
+enum ThemeSetting {
+  dark,
+  light,
+  system,
+}
+
+class GlobalSettings extends Table {
+  Column<String> get themeSetting => textEnum<ThemeSetting>()();
+
+  IntColumn get foo => integer()();
+}
+''',
+    }, modularBuild: true);
+
+    checkOutputs({
+      'a|lib/a.drift.dart':
+          decodedMatches(isNot(contains('_themeSettingMeta'))),
+    }, result.dartOutputs, result.writer);
+  });
 }

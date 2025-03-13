@@ -86,7 +86,28 @@ class SchemaVersionWriter {
   /// called in different places. This method looks up or creates a method for
   /// the given [column], returning it if doesn't exist.
   String _referenceColumn(DriftColumn column) {
-    final text = libraryScope.leaf();
+    final text = libraryScope.leaf(writeTaggedDartCode: (tag, buffer) {
+      final dartName = tag.tag;
+      final referencedColumn = column.owner.columns
+          .singleWhereOrNull((e) => e.nameInDart == dartName);
+
+      if (referencedColumn != null) {
+        // This references a column in the same table. Since we're not
+        // generating columns in a table structure where they would be in scope
+        // for Dart, we have to replace this with a custom expression evaluating
+        // to the column.
+        final sqlType = libraryScope.innerColumnType(referencedColumn.sqlType);
+        final result = libraryScope.dartCode(AnnotatedDartCode.build((b) => b
+          ..addText('(')
+          ..addSymbol('VersionedTable', _schemaLibrary)
+          ..addText('.col<')
+          ..addCode(sqlType)
+          ..addText('>(${asDartLiteral(referencedColumn.nameInSql)}))')));
+        buffer.write(result);
+      } else {
+        buffer.write(tag.lexeme);
+      }
+    });
     final (type, code) = TableOrViewWriter.instantiateColumn(column, text);
 
     return _columnCodeToFactory.putIfAbsent(code, () {
@@ -308,6 +329,12 @@ class SchemaVersionWriter {
   }
 
   void _writeCallbackArgsForStep(TextEmitter text) {
+    if (versions.withNext.isEmpty) {
+      return;
+    }
+
+    text.write('{');
+
     for (final (current, next) in versions.withNext) {
       text
         ..write('required Future<void> Function(')
@@ -315,6 +342,8 @@ class SchemaVersionWriter {
         ..write(' m, ${_nameForSchemaClass(next.version)} schema)')
         ..writeln('from${current.version}To${next.version},');
     }
+
+    text.write('}');
   }
 
   void write() {
@@ -374,10 +403,10 @@ class SchemaVersionWriter {
     // to the numbered Schema<x> class used to lookup elements.
     final steps = libraryScope.leaf()
       ..writeUriRef(_schemaLibrary, 'MigrationStepWithVersion')
-      ..write(' migrationSteps({');
+      ..write(' migrationSteps(');
     _writeCallbackArgsForStep(steps);
     steps
-      ..writeln('}) {')
+      ..writeln(') {')
       ..writeln('return (currentVersion, database) async {')
       ..writeln('switch (currentVersion) {');
 
@@ -403,10 +432,10 @@ class SchemaVersionWriter {
 
     final stepByStep = libraryScope.leaf()
       ..writeDriftRef('OnUpgrade')
-      ..write(' stepByStep({');
+      ..write(' stepByStep(');
     _writeCallbackArgsForStep(stepByStep);
     stepByStep
-      ..writeln('}) => ')
+      ..writeln(') => ')
       ..writeUriRef(_schemaLibrary, 'VersionedSchema')
       ..write('.stepByStepHelper(step: migrationSteps(');
 

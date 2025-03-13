@@ -30,8 +30,8 @@ class AnalyzeStatementOptions {
     final index = variable.resolvedIndex;
     if (index != null && indexedVariableTypes.containsKey(index)) {
       return indexedVariableTypes[index];
-    } else if (variable is ColonNamedVariable) {
-      return namedVariableTypes[variable.name];
+    } else if (variable is NamedVariable) {
+      return namedVariableTypes[variable.fullName];
     }
     return null;
   }

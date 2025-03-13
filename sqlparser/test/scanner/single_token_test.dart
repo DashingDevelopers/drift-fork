@@ -75,9 +75,7 @@ void main() {
   });
 
   test('issues error for unterminated string literals', () {
-    final scanner = Scanner("'unterminated");
-
-    expect(scanner.scanTokens, throwsA(isA<CumulatedTokenizerException>()));
+    final scanner = Scanner("'unterminated")..scanTokens();
 
     expect(
       scanner.errors,
@@ -196,5 +194,15 @@ void main() {
         .2,
       );
     });
+  });
+
+  test('named variables', () {
+    for (final prefix in [':', '@', r'$']) {
+      final scanner = Scanner('${prefix}name')..scanTokens();
+      final token = scanner.tokens.first as NamedVariableToken;
+
+      expect(token.name, 'name');
+      expect(token.fullName, '${prefix}name');
+    }
   });
 }

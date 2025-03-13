@@ -19,14 +19,14 @@ const _todoEntry = TodoEntry(
   id: RowId(10),
   title: 'A todo title',
   content: 'Content',
-  category: 3,
+  category: RowId(3),
 );
 
 void main() {
   late TodoDb db;
   late MockExecutor executor;
 
-  setUp(() {
+  setUp(() async {
     executor = MockExecutor();
     db = TodoDb(executor);
   });
@@ -284,5 +284,18 @@ void main() {
           'SELECT COUNT(*) AS "c0" FROM "todos" WHERE "todos"."id" > ?;',
           [12]));
     });
+  });
+
+  test('select expressions', () async {
+    when(executor.runSelect(any, any)).thenAnswer((_) async => [
+          {'c0': true}
+        ]);
+
+    final exists = existsQuery(db.select(db.todosTable));
+    final result = await db.selectExpressions([exists]).getSingle();
+
+    verify(
+        executor.runSelect('SELECT EXISTS (SELECT * FROM "todos") "c0";', []));
+    expect(result.read(exists), isTrue);
   });
 }

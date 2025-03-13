@@ -8,7 +8,7 @@ typedef OrderClauseGenerator<T> = OrderingTerm Function(T tbl);
 ///
 /// Users are not allowed to extend, implement or mix-in this class.
 @sealed
-abstract class BaseSelectStatement<Row> extends Component {
+abstract class BaseSelectStatement<Row> extends Component with Selectable<Row> {
   Iterable<(Expression, String)> get _expandedColumns;
 
   /// The name for the given [expression] in the result set, or `null` if
@@ -159,6 +159,86 @@ String _beginOfSelect(bool distinct) {
   return distinct ? 'SELECT DISTINCT' : 'SELECT';
 }
 
+@internal
+final class SelectWithoutTables extends BaseSelectStatement<TypedResult>
+    with Selectable<TypedResult> {
+  /// Map of added columns to chosen aliases.
+  final Map<Expression, String> _columns;
+  final DatabaseConnectionUser _db;
+
+  SelectWithoutTables(this._db, Iterable<Expression> columns)
+      : _columns = {
+          for (final (i, column) in columns.indexed) column: 'c$i',
+        };
+
+  @override
+  Iterable<(Expression<Object>, String)> get _expandedColumns =>
+      _columns.entries.map((e) => (e.key, e.value));
+
+  @override
+  TypedResult _mapRow(Map<String, Object?> fromDatabase) {
+    final queryRow = QueryRow(fromDatabase, _db);
+    return TypedResult(
+      const {},
+      queryRow,
+      _LazyExpressionMap(_columns, queryRow),
+    );
+  }
+
+  @override
+  String? _nameForColumn(Expression<Object> expression) {
+    return _columns[expression];
+  }
+
+  @override
+  void writeInto(GenerationContext context) {
+    final isRoot = context.buffer.isEmpty;
+    context.buffer.write('SELECT ');
+    var first = true;
+    for (final MapEntry(key: expr, value: alias) in _columns.entries) {
+      if (!first) {
+        context.buffer.write(', ');
+      }
+      first = false;
+      expr.writeInto(context);
+      context.buffer.write(' ${context.identifier(alias)}');
+    }
+
+    if (isRoot) context.buffer.write(';');
+  }
+
+  GenerationContext _createContext() {
+    final context = GenerationContext.fromDb(_db);
+    writeInto(context);
+    return context;
+  }
+
+  Future<List<Map<String, Object?>>> _fetchRaw(GenerationContext context) {
+    return _db.withCurrentExecutor((e) {
+      return e.runSelect(context.sql, context.boundVariables);
+    });
+  }
+
+  @override
+  Future<List<TypedResult>> get() async {
+    final context = _createContext();
+    final rows = await _fetchRaw(context);
+    return [for (final row in rows) _mapRow(row)];
+  }
+
+  @override
+  Stream<List<TypedResult>> watch() {
+    final context = _createContext();
+    return _db
+        .createStream(QueryStreamFetcher(
+          readsFrom: TableUpdateQuery.onAllTables(context.watchedTables),
+          key: StreamKey(context.sql, context.boundVariables),
+          fetchData: () => _fetchRaw(context),
+        ))
+        .map((rows) => [for (final row in rows) _mapRow(row)]);
+  }
+}
+
 /// A result row in a [JoinedSelectStatement] that can parse the result of
 /// multiple entities.
 class TypedResult {
@@ -220,5 +300,14 @@ class TypedResult {
       GeneratedColumnWithTypeConverter<D, S> column) {
     return NullAwareTypeConverter.wrapFromSql(
         column.converter, read<S>(column));
+  }
+}
+
+/// This extension is used to add custom data to a [TypedResult] row outside of this library.
+@internal
+extension EditTypedResultExtension on TypedResult {
+  /// Adds a new expression to this result row.
+  void addData(ResultSetImplementation table, dynamic data) {
+    _parsedData[table] = data;
   }
 }

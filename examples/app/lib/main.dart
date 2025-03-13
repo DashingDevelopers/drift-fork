@@ -1,16 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:stack_trace/stack_trace.dart';
 import 'package:go_router/go_router.dart';
 
 import 'screens/home.dart';
 import 'screens/search.dart';
 
 void main() {
+  FlutterError.demangleStackTrace = (StackTrace stack) {
+    if (stack is Trace) return stack.vmTrace;
+    if (stack is Chain) return stack.toTrace().vmTrace;
+    return stack;
+  };
+
   runApp(MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  MyApp({Key? key}) : super(key: key);
+  MyApp({super.key});
 
   final _router = GoRouter(
     routes: [

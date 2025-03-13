@@ -7,10 +7,11 @@ import 'package:collection/collection.dart';
 import 'package:path/path.dart';
 import 'package:sqlite3/sqlite3.dart';
 
-import '../../../analysis/results/results.dart';
 import '../../../services/schema/schema_files.dart';
+import '../../../services/schema/schema_isolate.dart';
 import '../../../services/schema/sqlite_to_drift.dart';
 import '../../cli.dart';
+import '../schema.dart';
 
 class DumpSchemaCommand extends Command {
   @override
@@ -27,7 +28,8 @@ class DumpSchemaCommand extends Command {
   final DriftDevCli cli;
 
   DumpSchemaCommand(this.cli) {
-    argParser.addSeparator("It's recommended to run this commend from the "
+    argParser.registerExportSchemaStartupCodeOption();
+    argParser.addSeparator("It's recommended to run this command from the "
         'directory containing your pubspec.yaml so that compiler options '
         'are respected.');
   }
@@ -39,16 +41,16 @@ class DumpSchemaCommand extends Command {
       usageException('Expected input and output files');
     }
 
+    final dumpSchemaCode = argResults!.exportSchemaStartupCode;
     final absolute = File(rest[0]).absolute;
-    final _AnalyzedDatabase result;
+    final AnalyzedDatabase result;
     if (await absolute.isSqlite3File) {
       result = await _readElementsFromDatabase(absolute);
     } else {
-      result = await _readElementsFromSource(absolute);
+      result = await cli.readElementsFromSource(absolute);
     }
 
-    final writer =
-        SchemaWriter(result.elements, options: cli.project.moorOptions);
+    final writer = SchemaWriter(result.elements, options: cli.project.options);
 
     var target = rest[1];
     // This command is most commonly used to write into
@@ -76,12 +78,13 @@ class DumpSchemaCommand extends Command {
       await parent.create(recursive: true);
     }
 
-    await file.writeAsString(json.encode(writer.createSchemaJson()));
+    await file.writeAsString(json.encode(
+        await writer.createSchemaJson(dumpStartupCode: dumpSchemaCode)));
     print('Wrote to $target');
   }
 
   /// Reads available drift elements from an existing sqlite database file.
-  Future<_AnalyzedDatabase> _readElementsFromDatabase(File database) async {
+  Future<AnalyzedDatabase> _readElementsFromDatabase(File database) async {
     final opened = sqlite3.open(database.path);
 
     try {
@@ -89,37 +92,10 @@ class DumpSchemaCommand extends Command {
       final userVersion =
           opened.select('pragma user_version').single.columnAt(0) as int;
 
-      return _AnalyzedDatabase(elements, userVersion);
+      return (elements: elements, schemaVersion: userVersion, db: null);
     } finally {
       opened.dispose();
     }
-  }
-
-  /// Extracts available drift elements from a [dart] source file defining a
-  /// drift database class.
-  Future<_AnalyzedDatabase> _readElementsFromSource(File dart) async {
-    final driver = await cli.createMoorDriver();
-
-    final input =
-        await driver.driver.fullyAnalyze(driver.uriFromPath(dart.path));
-
-    if (!input.isFullyAnalyzed) {
-      cli.exit('Unexpected error: The input file could not be analyzed');
-    }
-
-    final databases =
-        input.analysis.values.map((e) => e.result).whereType<DriftDatabase>();
-
-    if (databases.length != 1) {
-      cli.exit('Expected the input file to contain exactly one database.');
-    }
-
-    final result = input.fileAnalysis!;
-    final databaseElement = databases.single;
-    final db = result.resolvedDatabases[databaseElement.id]!;
-
-    return _AnalyzedDatabase(
-        db.availableElements, databaseElement.schemaVersion);
   }
 }
 
@@ -144,11 +120,4 @@ extension on File {
       await opened.close();
     }
   }
-}
-
-class _AnalyzedDatabase {
-  final List<DriftElement> elements;
-  final int? schemaVersion;
-
-  _AnalyzedDatabase(this.elements, this.schemaVersion);
 }

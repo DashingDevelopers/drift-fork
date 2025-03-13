@@ -1,6 +1,11 @@
 import 'package:drift/drift.dart';
-// ignore: import_of_legacy_library_into_null_safe
+import 'package:mockito/annotations.dart';
 import 'package:uuid/uuid.dart';
+
+// Generate mocks for drift
+@GenerateNiceMocks([MockSpec<TodoDb>()])
+// ignore: unused_import
+import 'todos.mocks.dart';
 
 part 'todos.g.dart';
 
@@ -9,7 +14,7 @@ extension type RowId._(int id) {
 }
 
 mixin AutoIncrement on Table {
-  IntColumn get id => integer()
+  late final id = integer()
       .autoIncrement()
       .map(TypeConverter.extensionType<RowId, int>())();
 }
@@ -19,14 +24,17 @@ class TodosTable extends Table with AutoIncrement {
   @override
   String get tableName => 'todos';
 
-  TextColumn get title => text().withLength(min: 4, max: 16).nullable()();
-  TextColumn get content => text()();
+  late final title = text().withLength(min: 4, max: 16).nullable()();
+  late final content = text()();
   @JsonKey('target_date')
-  DateTimeColumn get targetDate => dateTime().nullable().unique()();
+  late final targetDate = dateTime().nullable().unique()();
   @ReferenceName("todos")
-  IntColumn get category => integer().references(Categories, #id).nullable()();
+  late final category = integer()
+      .references(Categories, #id, initiallyDeferred: true)
+      .map(TypeConverter.extensionType<RowId, int>())
+      .nullable()();
 
-  TextColumn get status => textEnum<TodoStatus>().nullable()();
+  late final status = textEnum<TodoStatus>().nullable()();
 
   @override
   List<Set<Column>>? get uniqueKeys => [
@@ -38,11 +46,11 @@ class TodosTable extends Table with AutoIncrement {
 enum TodoStatus { open, workInProgress, done }
 
 class Users extends Table with AutoIncrement {
-  TextColumn get name => text().withLength(min: 6, max: 32).unique()();
-  BoolColumn get isAwesome => boolean().withDefault(const Constant(true))();
+  late final name = text().withLength(min: 6, max: 32).unique()();
+  late final isAwesome = boolean().withDefault(const Constant(true))();
 
-  BlobColumn get profilePicture => blob()();
-  DateTimeColumn get creationTime => dateTime()
+  late final profilePicture = blob()();
+  late final DateTimeColumn creationTime = dateTime()
       // ignore: recursive_getters
       .check(creationTime.isBiggerThan(Constant(DateTime.utc(1950))))
       .withDefault(currentDateAndTime)();
@@ -50,20 +58,19 @@ class Users extends Table with AutoIncrement {
 
 @DataClassName('Category')
 class Categories extends Table with AutoIncrement {
-  TextColumn get description =>
+  late final description =
       text().named('desc').customConstraint('NOT NULL UNIQUE')();
-  IntColumn get priority =>
+  late final priority =
       intEnum<CategoryPriority>().withDefault(const Constant(0))();
 
-  TextColumn get descriptionInUpperCase =>
-      text().generatedAs(description.upper())();
+  late final descriptionInUpperCase = text().generatedAs(description.upper())();
 }
 
 enum CategoryPriority { low, medium, high }
 
 class SharedTodos extends Table {
-  IntColumn get todo => integer()();
-  IntColumn get user => integer()();
+  late final todo = integer()();
+  late final user = integer()();
 
   @override
   Set<Column> get primaryKey => {todo, user};
@@ -109,7 +116,7 @@ class Department extends Table {
 }
 
 class Product extends Table {
-  IntColumn get id => integer().autoIncrement()();
+  TextColumn get sku => text()();
   TextColumn get name => text().nullable()();
   IntColumn get department =>
       integer().references(Department, #id).nullable()();
@@ -118,7 +125,7 @@ class Product extends Table {
 class Listing extends Table {
   IntColumn get id => integer().autoIncrement()();
   @ReferenceName('listings')
-  IntColumn get product => integer().references(Product, #id).nullable()();
+  TextColumn get product => text().references(Product, #sku)();
   @ReferenceName('listings')
   IntColumn get store => integer().references(Store, #id).nullable()();
   RealColumn get price => real().nullable()();

@@ -36,6 +36,13 @@ extension ApplyInterceptorConnection on DatabaseConnection {
 /// This wraps an existing [QueryExecutor] implemented by drift, and by default
 /// does nothing. However, specific methods can be overridden to customize the
 /// behavior of an existing query executor.
+///
+/// To apply an interceptor to an executor, use
+/// [ApplyInterceptor.interceptWith]. This returns a new [QueryExecutor] which
+/// can be used as a replacement when opening the database.
+///
+/// For an example on how interceptors may be used and installed, see this
+/// documentation page: https://drift.simonbinder.eu/docs/examples/tracing/
 abstract class QueryInterceptor {
   /// Intercept [QueryExecutor.dialect] calls.
   SqlDialect dialect(QueryExecutor executor) => executor.dialect;
@@ -43,6 +50,9 @@ abstract class QueryInterceptor {
   /// Intercept [QueryExecutor.beginTransaction] calls.
   TransactionExecutor beginTransaction(QueryExecutor parent) =>
       parent.beginTransaction();
+
+  /// Intercept [QueryExecutor.beginExclusive] calls.
+  QueryExecutor beginExclusive(QueryExecutor parent) => parent.beginExclusive();
 
   /// Intercept [TransactionExecutor.supportsNestedTransactions] calls.
   bool transactionCanBeNested(TransactionExecutor inner) {
@@ -112,6 +122,12 @@ class _InterceptedExecutor extends QueryExecutor {
   @override
   TransactionExecutor beginTransaction() => _InterceptedTransactionExecutor(
       _interceptor.beginTransaction(_inner), _interceptor);
+
+  @override
+  QueryExecutor beginExclusive() {
+    return _InterceptedExecutor(
+        _interceptor.beginExclusive(_inner), _interceptor);
+  }
 
   @override
   SqlDialect get dialect => _interceptor.dialect(_inner);

@@ -5,7 +5,3 @@
 
 import 'src/posts.drift';
 import 'src/users.dart';
-
-allPosts: SELECT posts.**, author.** FROM posts
-  INNER JOIN users AS author ON author.id = posts.author
-  LIMIT $limit;

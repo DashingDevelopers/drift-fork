@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 import 'dart:convert' as convert;
 
+import 'package:sqlite3/common.dart' as sqlite3 show jsonb;
+
 import '../../dsl/dsl.dart';
 import '../data_class.dart';
 
@@ -28,6 +30,80 @@ abstract class TypeConverter<D, S> {
   D fromSql(S fromDb);
 
   /// Creates a type converter for storing complex Dart objects in a text column
+  /// by serializing them as JSON text.
+  ///
+  /// This requires supplying [fromJson], a function responsible for mapping the
+  /// parsed JSON structure to the Dart type [D]. Optionally, you can also
+  /// be explicit about the other direction via [toJson]. By default, Dart's
+  /// JSON encoder simply calls `toJson()` on the object.
+  ///
+  /// Finally, the [json] codec itself can be customized as well if needed.
+  ///
+  /// For sqlite3 databases, [jsonb] can be used as an alternative encoding for
+  /// binary columns.
+  ///
+  /// ### Deprecated
+  ///
+  /// This method is deprecated because it always maps values to [String]s when
+  /// [JsonTypeConverter.toJson] is called. This is typically undesired
+  /// behavior, as it leads to double encodings. Consider this table:
+  ///
+  /// ```dart
+  /// class MyValue {
+  ///   // ...
+  ///   factory MyValue.fromJson(Object? json) {
+  ///     // ...
+  ///   }
+  ///
+  ///   Object? toJson() => {'foo': 'bar'};
+  /// }
+  ///
+  /// class MyTable extends Table {
+  ///   TextColumn get col => text().map(TypeConverter.json<MyValue>(
+  ///     fromJson: MyValue.fromJson,
+  ///   ))();
+  /// }
+  /// ```
+  ///
+  /// Here, calling `MyTableData.toJson` will report a value like the following:
+  ///
+  /// ```json
+  /// {
+  ///   "col": "{\"foo\": \"bar\"}"
+  /// }
+  /// ```
+  ///
+  /// Note that the actual value has been converted to JSON twice.
+  /// Using [TypeConverter.json2] fixes the issue, and will properly encode the
+  /// value as:
+  ///
+  /// ```json
+  /// {
+  ///   "col": {
+  ///     "foo": "bar"
+  ///   }
+  /// }
+  /// ```
+  ///
+  /// Given the different formats, migrating from [TypeConverter.json] to
+  /// [json2] can be a breaking change.
+  @Deprecated(
+    'Use TypeConverter.json2 instead. This converter causes a double JSON '
+    'conversion when serializing drift row classes to JSON.',
+  )
+  static JsonTypeConverter<D, String> json<D>({
+    required D Function(dynamic json) fromJson,
+    dynamic Function(D column)? toJson,
+    convert.JsonCodec json = convert.json,
+  }) {
+    return _LegacyJsonConverter<D>(
+      mapFromJson: fromJson,
+      mapToJson: toJson ?? (value) => value,
+      json: json,
+    );
+  }
+
+  /// Creates a type converter for storing complex Dart objects in a text column
   /// by serializing them as JSON.
   ///
   /// This requires supplying [fromJson], a function responsible for mapping the
@@ -36,15 +112,46 @@ abstract class TypeConverter<D, S> {
   /// JSON encoder simply calls `toJson()` on the object.
   ///
   /// Finally, the [json] codec itself can be customized as well if needed.
-  static JsonTypeConverter<D, String> json<D>({
-    required D Function(dynamic json) fromJson,
-    dynamic Function(D column)? toJson,
+  ///
+  /// For sqlite3 databases, [jsonb] can be used as an alternative encoding for
+  /// binary columns.
+  static JsonTypeConverter2<D, String, Object?> json2<D>({
+    required D Function(Object? json) fromJson,
+    Object? Function(D column)? toJson,
     convert.JsonCodec json = convert.json,
   }) {
-    return _JsonBasedConverter<D>(
+    return _DefaultJsonConverter<D, String, Object?>(
       mapFromJson: fromJson,
       mapToJson: toJson ?? (value) => value,
-      json: json,
+      jsonForDb: json,
+    );
+  }
+
+  /// Creates a type converter for storing complex Dart objects in a binary
+  /// column by serializing them into the [JSONB representation] used by SQLite.
+  ///
+  /// This requires supplying [fromJson], a function responsible for mapping the
+  /// parsed JSON structure to the Dart type [D]. Optionally, you can also
+  /// be explicit about the other direction via [toJson]. By default, the JSONB
+  /// encoder simply calls `toJson()` on the object.
+  ///
+  /// Note that this representation is primarily useful when [JSON operators]
+  /// are commonly used on the column to extract individual fields. The main
+  /// advantage of the JSONB representation is that those operators can be
+  /// implemented more efficiently. For the common case where entire JSON values
+  /// are inserted and selected, prefer using a textual [json2] converter for
+  /// better compatibility with standard formats.
+  ///
+  /// [JSONB representation]: https://sqlite.org/jsonb.html
+  /// [JSON operators]: https://sqlite.org/json1.html
+  static JsonTypeConverter2<D, Uint8List, Object?> jsonb<D>({
+    required D Function(Object? json) fromJson,
+    Object? Function(D column)? toJson,
+  }) {
+    return _DefaultJsonConverter<D, Uint8List, Object?>(
+      mapFromJson: fromJson,
+      mapToJson: toJson ?? (value) => value,
+      jsonForDb: sqlite3.jsonb,
     );
   }
 
@@ -105,7 +212,7 @@ mixin JsonTypeConverter2<D, S, J> on TypeConverter<D, S> {
   /// Dart to SQL and vice-versa).
   static JsonTypeConverter2<D?, S?, J?>
       asNullable<D, S extends Object, J extends Object>(
-          JsonTypeConverter2<D, S, J> inner) {
+          JsonTypeConverter2<D, S, J?> inner) {
     return _NullWrappingTypeConverterWithJson(inner);
   }
 }
@@ -233,13 +340,18 @@ abstract class NullAwareTypeConverter<D, S extends Object>
   }
 }
 
-class _JsonBasedConverter<D> extends TypeConverter<D, String>
+@Deprecated(
+  'Use _DefaultJsonConverter instead. This one is flawed, as it maps values to'
+  'JSON strings for JSON serialization, leading to double serialiazion when '
+  'serializing drift row classes.',
+)
+class _LegacyJsonConverter<D> extends TypeConverter<D, String>
     with JsonTypeConverter<D, String> {
   final D Function(dynamic json) mapFromJson;
   final dynamic Function(D column) mapToJson;
   final convert.JsonCodec json;
 
-  _JsonBasedConverter(
+  _LegacyJsonConverter(
       {required this.mapFromJson, required this.mapToJson, required this.json});
 
   @override
@@ -250,6 +362,38 @@ class _JsonBasedConverter<D> extends TypeConverter<D, String>
   @override
   String toSql(D value) {
     return json.encode(mapToJson(value));
+  }
+}
+
+class _DefaultJsonConverter<D, S, J> extends TypeConverter<D, S>
+    with JsonTypeConverter2<D, S, J> {
+  final D Function(J json) mapFromJson;
+  final J Function(D column) mapToJson;
+  final convert.Codec<Object?, S> jsonForDb;
+
+  _DefaultJsonConverter(
+      {required this.mapFromJson,
+      required this.mapToJson,
+      required this.jsonForDb});
+
+  @override
+  D fromSql(S fromDb) {
+    return mapFromJson(jsonForDb.decode(fromDb) as J);
+  }
+
+  @override
+  S toSql(D value) {
+    return jsonForDb.encode(mapToJson(value));
+  }
+
+  @override
+  D fromJson(J json) {
+    return mapFromJson(json);
+  }
+
+  @override
+  J toJson(D value) {
+    return mapToJson(value);
   }
 }
 
@@ -266,10 +410,10 @@ class _NullWrappingTypeConverter<D, S extends Object>
   S requireToSql(D value) => _inner.toSql(value);
 }
 
-class _NullWrappingTypeConverterWithJson<D, S extends Object, J extends Object>
+class _NullWrappingTypeConverterWithJson<D, S extends Object, J>
     extends NullAwareTypeConverter<D, S>
     implements JsonTypeConverter2<D?, S?, J?> {
-  final JsonTypeConverter2<D, S, J> _inner;
+  final JsonTypeConverter2<D, S, J?> _inner;
 
   const _NullWrappingTypeConverterWithJson(this._inner);
 

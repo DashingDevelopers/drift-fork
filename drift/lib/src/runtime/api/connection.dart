@@ -20,11 +20,22 @@ class DatabaseConnection implements QueryExecutor {
 
   /// Constructs a raw database connection from the [executor] and optionally a
   /// specified [streamQueries] implementation to use.
+  ///
+  /// When creating a default stream query implementation,
+  /// [closeStreamsSynchronously] determines whether drift stops query streams
+  /// immediately after the last listener detaches. By default, drift will wait
+  /// for one event loop iteration to avoid duplicate work for e.g.
+  /// `StreamBuilder` setups that reconnect on rebuilds. Enabling that option
+  /// may be useful in test setups that throw exceptions for timers persisting
+  /// after tests.
   DatabaseConnection(
     this.executor, {
     StreamQueryStore? streamQueries,
     this.connectionData,
-  }) : streamQueries = streamQueries ?? StreamQueryStore();
+    bool closeStreamsSynchronously = false,
+  }) : streamQueries = streamQueries ??
+            StreamQueryStore(
+                closeStreamsSynchronously: closeStreamsSynchronously);
 
   /// Constructs a [DatabaseConnection] from the [QueryExecutor] by using the
   /// default type system and a new [StreamQueryStore].
@@ -60,7 +71,11 @@ class DatabaseConnection implements QueryExecutor {
     }
 
     return DatabaseConnection(
-      LazyDatabase(() async => (await connection).executor, dialect: dialect),
+      LazyDatabase(
+        () async => (await connection).executor,
+        dialect: dialect,
+        openImmediately: true,
+      ),
       streamQueries: DelayedStreamQueryStore(
         connection.then((conn) => conn.streamQueries),
       ),
@@ -73,6 +88,9 @@ class DatabaseConnection implements QueryExecutor {
   DatabaseConnection withExecutor(QueryExecutor executor) {
     return DatabaseConnection(executor, streamQueries: streamQueries);
   }
+
+  @override
+  QueryExecutor beginExclusive() => executor.beginExclusive();
 
   @override
   TransactionExecutor beginTransaction() => executor.beginTransaction();

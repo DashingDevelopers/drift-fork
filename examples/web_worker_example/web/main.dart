@@ -1,26 +1,34 @@
-import 'dart:html';
+import 'dart:js_interop';
 
-import 'package:drift/web/worker.dart';
+import 'package:drift/wasm.dart';
+import 'package:web/web.dart';
 import 'package:web_worker_example/database.dart';
 
 void main() async {
-  final connection = await connectToDriftWorker('worker.dart.js');
-  final db = MyDatabase(connection);
+  final connection = await WasmDatabase.open(
+    databaseName: 'worker',
+    sqlite3Uri: Uri.parse('/sqlite3.wasm'),
+    driftWorkerUri: Uri.parse('/worker.dart.js'),
+  );
+
+  print('Opened WASM database: ${connection.chosenImplementation}');
+
+  final db = MyDatabase(connection.resolvedExecutor);
 
   final output = document.getElementById('output')!;
-  final input = document.getElementById('field')! as InputElement;
-  final submit = document.getElementById('submit')! as ButtonElement;
+  final input = document.getElementById('field')! as HTMLInputElement;
+  final submit = document.getElementById('submit')! as HTMLButtonElement;
 
   db.allEntries().watch().listen((rows) {
-    output.innerHtml = '';
+    output.innerHTML = ''.toJS;
 
     for (final row in rows) {
-      output.children.add(Element.li()..text = row.value);
+      output.appendChild(HTMLLIElement()..text = row.value);
     }
   });
 
   submit.onClick.listen((event) {
-    db.addEntry(input.value ?? '');
-    input.value = null;
+    db.addEntry(input.value);
+    input.value = '';
   });
 }

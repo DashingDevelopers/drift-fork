@@ -23,7 +23,7 @@ import 'package:sqlite3/wasm.dart';
 import 'package:web/web.dart' as web;
 
 import 'broadcast_stream_queries.dart';
-import 'new_channel.dart';
+import 'channel_new.dart';
 import 'wasm_setup/shared.dart';
 import 'wasm_setup/protocol.dart';
 
@@ -93,12 +93,14 @@ class WasmDatabaseOpener {
     } on Object {
       _sharedWorker?.close();
       _sharedWorker = null;
+      missingFeatures.add(MissingBrowserFeature.workerError);
     }
     try {
       await _probeDedicated();
     } on Object {
       _dedicatedWorker?.close();
       _dedicatedWorker = null;
+      missingFeatures.add(MissingBrowserFeature.workerError);
     }
 
     return _ProbeResult(availableImplementations, existingDatabases.toList(),
@@ -108,7 +110,7 @@ class WasmDatabaseOpener {
   Future<void> _probeDedicated() async {
     if (supportsWorkers) {
       final dedicatedWorker = _dedicatedWorker =
-          _DriftWorker.dedicated(web.Worker(driftWorkerUri.toString()));
+          _DriftWorker.dedicated(web.Worker(driftWorkerUri.toString().toJS));
       _createCompatibilityCheck().sendTo(dedicatedWorker.send);
 
       final status = await dedicatedWorker.workerMessages.nextNoError
@@ -134,7 +136,7 @@ class WasmDatabaseOpener {
   Future<void> _probeShared() async {
     if (supportsSharedWorkers) {
       final sharedWorker =
-          web.SharedWorker(driftWorkerUri.toString(), 'drift worker'.toJS);
+          web.SharedWorker(driftWorkerUri.toString().toJS, 'drift worker'.toJS);
       final port = sharedWorker.port;
       final shared = _sharedWorker = _DriftWorker.shared(sharedWorker, port);
 
@@ -245,6 +247,7 @@ final class _ProbeResult implements WasmProbeResult {
           initializationPort: initChannel?.port2,
           enableMigrations: enableMigrations,
           protocolVersion: sharedWorker!.version,
+          newSerialization: sharedWorker.version >= ProtocolVersion.v3,
         );
 
         message.sendTo(sharedWorker.send);
@@ -259,6 +262,7 @@ final class _ProbeResult implements WasmProbeResult {
             initializationPort: initChannel?.port2,
             enableMigrations: enableMigrations,
             protocolVersion: dedicatedWorker.version,
+            newSerialization: dedicatedWorker.version >= ProtocolVersion.v3,
           );
 
           message.sendTo(dedicatedWorker.send);
@@ -298,10 +302,14 @@ final class _ProbeResult implements WasmProbeResult {
       });
     }
 
-    final local = channel.port1
-        .channel(explicitClose: message.protocolVersion >= ProtocolVersion.v1);
+    final local = channel.port1.channel(
+      explicitClose: message.protocolVersion >= ProtocolVersion.v1,
+      webNativeSerialization: message.newSerialization,
+      nativeSerializionVersion: message.protocolVersion.versionCode,
+    );
 
-    var connection = await connectToRemoteAndInitialize(local);
+    var connection = await connectToRemoteAndInitialize(local,
+        serialize: !message.newSerialization);
     if (implementation == WasmStorageImplementation.opfsLocks) {
       // We want stream queries to update for writes in other tabs. For the
       // implementations backed by a shared worker, the worker takes care of

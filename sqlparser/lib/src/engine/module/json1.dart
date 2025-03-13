@@ -60,13 +60,13 @@ class _Json1Functions implements FunctionHandler {
 
   @override
   ResolveResult inferArgumentType(
-      AnalysisContext context, SqlInvocation call, Expression argument) {
+      TypeInferenceSession session, SqlInvocation call, Expression argument) {
     return const ResolveResult.unknown();
   }
 
   @override
-  ResolveResult inferReturnType(AnalysisContext context, SqlInvocation call,
-      List<Typeable> expandedArgs) {
+  ResolveResult inferReturnType(TypeInferenceSession session,
+      SqlInvocation call, List<Typeable> expandedArgs) {
     final name = call.name.toLowerCase();
 
     if (_returnStrings.contains(name)) {
@@ -82,7 +82,7 @@ class _Json1Functions implements FunctionHandler {
           return const ResolveResult(ResolvedType.bool());
         case 'json_extract':
         case 'jsonb_extract':
-          return const ResolveResult.unknown();
+          return const ResolveResult.needsContext();
         case 'json_array_length':
           return const ResolveResult(ResolvedType(type: BasicType.int));
       }

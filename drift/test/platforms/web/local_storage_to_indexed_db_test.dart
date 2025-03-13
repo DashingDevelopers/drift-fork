@@ -1,7 +1,11 @@
-@TestOn('browser')
+@TestOn('browser && !dart2wasm')
+@Skip('sql.js not set up for testing')
+library;
+
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
+// ignore: deprecated_member_use_from_same_package
 import 'package:drift/web.dart';
 import 'package:test/test.dart';
 

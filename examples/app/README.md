@@ -39,31 +39,9 @@ After changing the structure of your database schema, for instance by adding
 new tables or altering columns, you need to write a migration to ensure that
 existing users of your app can convert their database to the latest version.
 
-Drift contains [builtin APIs](https://drift.simonbinder.eu/docs/advanced-features/migrations/)
-for common migrations.
-Also, it includes builtin tools to verify that migrations are doing what they're
-supposed to do.
-
-To write such tests, run the following command after making schema changes and
-incrementing your schema version. It will export the current schema of the
-database as a JSON file. You should check those generated files into source control.
+Run the following command to save the new schema and generate a step-by-step migration helper for
+this schema.
 
 ```
-dart run drift_dev schema dump lib/database/database.dart drift_schemas/
+dart run drift_dev make-migrations
 ```
-
-Then, run the following command to automatically generate test utilities which
-you can use to write unit tests for schema migrations:
-
-```
-dart run drift_dev schema generate drift_schemas/ test/generated_migrations/
-```
-
-To make migrations easier, this command updates the `lib/database/schema_versions.dart`
-file containing snapshots of older database schema:
-
-```
-dart run drift_dev schema steps drift_schemas/ lib/database/schema_versions.dart
-```
-
-An example for a schema test is in `test/migration_test.dart`.

@@ -1,7 +1,10 @@
 @Tags(['integration'])
 @TestOn('vm')
+library;
+
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'package:drift/src/runtime/cancellation_zone.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 
@@ -30,12 +33,10 @@ void main() {
         return driftDb.select(driftDb.categories).get();
       }),
       throwsA(
-        isA<CouldNotRollBackException>().having(
-          (e) => e.cause,
-          'cause',
-          isA<SqliteException>().having((e) => e.causingStatement,
-              'causingStatement', 'BEGIN TRANSACTION'),
-        ),
+        isA<SqliteException>()
+            .having((e) => e.causingStatement, 'causingStatement',
+                'BEGIN TRANSACTION')
+            .having((e) => e.extendedResultCode, 'resultCode', 262),
       ),
     );
 
@@ -127,5 +128,44 @@ void main() {
     }, throwsA(expectedException));
 
     expect(await db.todosTable.all().get(), isEmpty);
+  });
+
+  test('exclusively', () async {
+    final db = TodoDb(NativeDatabase.memory());
+    addTearDown(db.close);
+
+    bool query1Finished = false;
+
+    // Make a slow query and check that it is not interleaved with other queries/transactions
+    final fut1 = db.exclusively<int>(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await db.customSelect('SELECT 1').get();
+      query1Finished = true;
+      return 7;
+    });
+
+    final fut2 = db.transaction<int>(() async {
+      expect(query1Finished, true);
+      return 5;
+    });
+
+    final results = await Future.wait<void>([fut1, fut2]);
+    expect(results, [7, 5]);
+  });
+
+  test('can cancel opening transactions', () async {
+    final db = TodoDb(NativeDatabase.memory());
+    addTearDown(db.close);
+
+    final token = CancellationToken<void>()..cancel();
+
+    runCancellable(() async {
+      await db.transaction(() async {
+        throw 'should not be reached';
+      });
+    }, token: token);
+    expect(token.result, throwsA(isA<CancellationException>()));
+
+    await db.customSelect('SELECT 1').get();
   });
 }

@@ -22,26 +22,26 @@ abstract class FunctionHandler {
   /// Resolve the return type of a function invocation.
   ///
   /// The [call] refers to a function declared in [functionNames]. To provide
-  /// further analysis, the [context] may be used. To support function calls
+  /// further analysis, the [session] may be used. To support function calls
   /// with a [StarFunctionParameter], [expandedArgs] contains the expanded
   /// arguments from a `function(*)` call.
   ///
   /// If resolving to a type isn't possible, implementations should return
   /// [ResolveResult.unknown].
-  ResolveResult inferReturnType(
-      AnalysisContext context, SqlInvocation call, List<Typeable> expandedArgs);
+  ResolveResult inferReturnType(TypeInferenceSession session,
+      SqlInvocation call, List<Typeable> expandedArgs);
 
   /// Resolve the type of an argument used in a function invocation.
   ///
   /// The [call] refers to a function declared in [functionNames]. To provide
-  /// further analysis, the [context] may be used. This method should return
+  /// further analysis, the [session] may be used. This method should return
   /// the inferred type of [argument], which is an argument passed to the
   /// [call].
   ///
   /// If resolving to a type isn't possible, implementations should return
   /// [ResolveResult.unknown].
   ResolveResult inferArgumentType(
-      AnalysisContext context, SqlInvocation call, Expression argument);
+      TypeInferenceSession session, SqlInvocation call, Expression argument);
 
   /// Can optionally be used by implementations to provide [AnalysisError]s
   /// from the [call].

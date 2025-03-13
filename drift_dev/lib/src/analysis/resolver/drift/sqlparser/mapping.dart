@@ -109,7 +109,7 @@ class TypeMapping {
     };
   }
 
-  DriftSqlType _toDefaultType(ResolvedType type) {
+  static DriftSqlType toDefaultType(ResolvedType type, bool dateTimeAsText) {
     switch (type.type) {
       case null:
       case BasicType.nullType:
@@ -117,8 +117,7 @@ class TypeMapping {
       case BasicType.int:
         if (type.hint<IsBoolean>() != null) {
           return DriftSqlType.bool;
-        } else if (!driver.options.storeDateTimeValuesAsText &&
-            type.hint<IsDateTime>() != null) {
+        } else if (!dateTimeAsText && type.hint<IsDateTime>() != null) {
           return DriftSqlType.dateTime;
         } else if (type.hint<IsBigInt>() != null) {
           return DriftSqlType.bigInt;
@@ -127,8 +126,7 @@ class TypeMapping {
       case BasicType.real:
         return DriftSqlType.double;
       case BasicType.text:
-        if (driver.options.storeDateTimeValuesAsText &&
-            type.hint<IsDateTime>() != null) {
+        if (dateTimeAsText && type.hint<IsDateTime>() != null) {
           return DriftSqlType.dateTime;
         }
 
@@ -138,6 +136,10 @@ class TypeMapping {
       case BasicType.any:
         return DriftSqlType.any;
     }
+  }
+
+  DriftSqlType _toDefaultType(ResolvedType type) {
+    return toDefaultType(type, driver.options.storeDateTimeValuesAsText);
   }
 
   ColumnType sqlTypeToDrift(ResolvedType? type) {

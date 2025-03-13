@@ -15,6 +15,7 @@ import 'package:web_wasm/initialization_mode.dart';
 import 'package:webdriver/async_io.dart';
 // ignore: implementation_imports
 import 'package:drift/src/web/wasm_setup/types.dart';
+import 'package:webdriver/support/async.dart';
 
 class TestAssetServer {
   final BuildDaemonClient buildRunner;
@@ -27,7 +28,10 @@ class TestAssetServer {
     await buildRunner.close();
   }
 
-  static Future<TestAssetServer> start() async {
+  static Future<TestAssetServer> start({
+    bool debug = false,
+    int? fixedPort,
+  }) async {
     final packageConfig =
         await loadPackageConfigUri((await Isolate.packageConfig)!);
     final ownPackage = packageConfig['web_wasm']!.root;
@@ -43,6 +47,9 @@ class TestAssetServer {
         'run',
         'build_runner',
         'daemon',
+        '-d',
+        if (debug)
+          '--define=build_web_compilers:entrypoint=dart2js_args=["-Dsqlite3.wasm.worker.debug=true"]'
       ],
       logHandler: (log) => print(log.message),
     );
@@ -88,7 +95,7 @@ class TestAssetServer {
         }
       },
       'localhost',
-      8080,
+      fixedPort ?? 0,
     );
 
     return server;
@@ -101,14 +108,23 @@ class DriftWebDriver {
 
   DriftWebDriver(this.server, this.driver);
 
+  /// Wait for the Dart code on the test page to finish its main method, which
+  /// it signals by creating an element.
+  Future<void> waitReady() async {
+    await waitFor(() => driver.findElement(By.id('ready')));
+  }
+
   Future<
       ({
         Set<WasmStorageImplementation> storages,
         Set<MissingBrowserFeature> missingFeatures,
         List<ExistingDatabase> existing,
-      })> probeImplementations() async {
-    final rawResult = await driver
-        .executeAsync('detectImplementations("", arguments[0])', []);
+      })> probeImplementations({bool withWrongWorkerUri = false}) async {
+    final method = withWrongWorkerUri
+        ? 'detectImplementationsWrongUri'
+        : 'detectImplementations';
+    final rawResult =
+        await driver.executeAsync('$method("", arguments[0])', []);
     final result = json.decode(rawResult);
 
     return (
@@ -141,6 +157,10 @@ class DriftWebDriver {
 
   Future<void> insertIntoDatabase() async {
     await driver.executeAsync('insert("", arguments[0])', []);
+  }
+
+  Future<void> runExclusiveBlock() async {
+    await driver.executeAsync('do_exclusive("", arguments[0])', []);
   }
 
   Future<int> get amountOfRows async {
@@ -181,5 +201,9 @@ class DriftWebDriver {
     await driver.executeAsync('delete_database(arguments[0], arguments[1])', [
       json.encode([storageApi.name, name]),
     ]);
+  }
+
+  Future<bool> isDart2wasm() async {
+    return await driver.executeAsync('isDart2wasm("", arguments[0])', []);
   }
 }

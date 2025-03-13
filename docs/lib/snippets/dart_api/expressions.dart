@@ -34,6 +34,40 @@ extension Snippets on CanUseCommonTables {
     await update(todoItems).write(change);
   }
   // #enddocregion date3
+
+  // #docregion window
+  /// Returns all todo items, associating each item with the total length of all
+  /// titles up until (and including) each todo item.
+  Selectable<(TodoItem, int)> todosWithRunningLength() {
+    final runningTitleLength = WindowFunctionExpression(
+      todoItems.title.length.sum(),
+      orderBy: [OrderingTerm.asc(todoItems.id)],
+    );
+    final query = select(todoItems).addColumns([runningTitleLength]);
+    query.orderBy([OrderingTerm.asc(todoItems.id)]);
+
+    return query.map((row) {
+      return (row.readTable(todoItems)!, row.read(runningTitleLength)!);
+    });
+  }
+  // #enddocregion window
+
+  // #docregion window2
+  /// Returns all todo items, also reporting the index (counting from 1) each
+  /// todo item would have if all items were sorted by descending content
+  /// length.
+  Selectable<(TodoItem, int)> todosWithLengthRanking() {
+    final lengthRanking = WindowFunctionExpression(
+      todoItems.id.count(),
+      orderBy: [OrderingTerm.desc(todoItems.content.length)],
+    );
+    final query = select(todoItems).addColumns([lengthRanking]);
+
+    return query.map((row) {
+      return (row.readTable(todoItems)!, row.read(lengthRanking)!);
+    });
+  }
+  // #enddocregion window2
 }
 
 // #docregion bitwise

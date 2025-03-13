@@ -100,7 +100,7 @@ class DriftAnalyzer extends Builder {
       hadWarnings = true;
     }
 
-    if (results.analysis.isNotEmpty) {
+    if (results.analysis.isNotEmpty || results.imports?.isNotEmpty == true) {
       for (final result in results.analysis.values) {
         for (final error in result.errorsDuringAnalysis) {
           log.warning(error.toString());

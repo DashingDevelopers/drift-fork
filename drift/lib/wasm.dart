@@ -4,7 +4,7 @@
 /// them, see https://drift.simonbinder.eu/web/.
 /// Be aware that additional setup is necessary to use drift on the web, this
 /// is explained in the documentation.
-library drift.wasm;
+library;
 
 import 'dart:async';
 import 'dart:js_interop';
@@ -88,6 +88,31 @@ class WasmDatabase extends DelegatedDatabase {
     return WasmDatabase._(
       _WasmDelegate(sqlite3, null, setup, null,
           cachePreparedStatements: cachePreparedStatements),
+      logStatements,
+    );
+  }
+
+  /// Creates a drift executor for an opened [database] from the `sqlite3`
+  /// package.
+  ///
+  /// When the [closeUnderlyingOnClose] argument is set (which is the default),
+  /// calling [QueryExecutor.close] on the returned [WasmDatabase] will also
+  /// [CommonDatabase.dispose] the [database] passed to this constructor.
+  ///
+  /// Using [WasmDatabase.opened] may be useful when you want to use the same
+  /// underlying [CommonDatabase] in multiple drift connections. Drift uses this
+  /// internally when running [integration tests for migrations](https://drift.simonbinder.eu/docs/advanced-features/migrations/#verifying-migrations).
+  factory WasmDatabase.opened(
+    CommonDatabase database, {
+    bool logStatements = false,
+    WasmDatabaseSetup? setup,
+    bool closeUnderlyingOnClose = true,
+    bool enableMigrations = true,
+    bool cachePreparedStatements = true,
+  }) {
+    return WasmDatabase._(
+      _WasmDelegate.opened(database, setup, closeUnderlyingOnClose,
+          cachePreparedStatements, enableMigrations),
       logStatements,
     );
   }
@@ -239,7 +264,7 @@ class WasmDatabase extends DelegatedDatabase {
 }
 
 class _WasmDelegate extends Sqlite3Delegate<CommonDatabase> {
-  final CommonSqlite3 _sqlite3;
+  final CommonSqlite3? _sqlite3;
   final String? _path;
   final IndexedDbFileSystem? _fileSystem;
 
@@ -252,13 +277,27 @@ class _WasmDelegate extends Sqlite3Delegate<CommonDatabase> {
     required super.cachePreparedStatements,
   });
 
+  _WasmDelegate.opened(
+    super.db,
+    super.setup,
+    super.closeUnderlyingWhenClosed,
+    bool cachePreparedStatements,
+    bool enableMigrations,
+  )   : _sqlite3 = null,
+        _path = null,
+        _fileSystem = null,
+        super.opened(
+          cachePreparedStatements: cachePreparedStatements,
+          enableMigrations: enableMigrations,
+        );
+
   @override
   CommonDatabase openDatabase() {
     final path = _path;
     if (path == null) {
-      return _sqlite3.openInMemory();
+      return _sqlite3!.openInMemory();
     } else {
-      return _sqlite3.open(path);
+      return _sqlite3!.open(path);
     }
   }
 

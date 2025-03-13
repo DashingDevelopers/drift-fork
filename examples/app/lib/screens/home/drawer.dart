@@ -7,7 +7,7 @@ import '../../database/database.dart';
 import 'state.dart';
 
 class CategoriesDrawer extends ConsumerWidget {
-  const CategoriesDrawer({Key? key}) : super(key: key);
+  const CategoriesDrawer({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -49,7 +49,7 @@ class CategoriesDrawer extends ConsumerWidget {
 class _CategoryDrawerEntry extends ConsumerWidget {
   final CategoryWithCount entry;
 
-  const _CategoryDrawerEntry({Key? key, required this.entry}) : super(key: key);
+  const _CategoryDrawerEntry({required this.entry});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -124,13 +124,11 @@ class _CategoryDrawerEntry extends ConsumerWidget {
                       },
                     ),
                     TextButton(
-                      style: ButtonStyle(
-                        foregroundColor: WidgetStateProperty.all(Colors.red),
-                      ),
                       onPressed: () {
                         Navigator.pop(context, true);
                       },
-                      child: const Text('Delete'),
+                      child: const Text('Delete',
+                          style: TextStyle(color: Colors.red)),
                     ),
                   ],
                 );
@@ -150,6 +148,7 @@ class _CategoryDrawerEntry extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Material(
         color: isActive
+            // ignore: deprecated_member_use
             ? Colors.orangeAccent.withOpacity(0.3)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(8),

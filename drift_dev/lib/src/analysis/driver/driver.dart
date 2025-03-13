@@ -56,7 +56,7 @@ class DriftAnalysisDriver {
   final DriftBackend backend;
   final DriftAnalysisCache cache = DriftAnalysisCache();
   final DriftOptions options;
-  final bool _isTesting;
+  final bool isTesting;
 
   Future<KnownDriftTypes?>? _loadingTypes;
 
@@ -65,8 +65,8 @@ class DriftAnalysisDriver {
   DriftAnalysisDriver(
     this.backend,
     this.options, {
-    bool isTesting = false,
-  }) : _isTesting = isTesting;
+    this.isTesting = false,
+  });
 
   SqlEngine newSqlEngine() {
     return SqlEngine(
@@ -76,6 +76,7 @@ class DriftAnalysisDriver {
         ),
         enabledExtensions: [
           DriftOptionsExtension(options),
+          if (options.hasModule(SqlModule.dbstat)) const DbStatExtension(),
           if (options.hasModule(SqlModule.fts5)) const Fts5Extension(),
           if (options.hasModule(SqlModule.json1)) const Json1Extension(),
           if (options.hasModule(SqlModule.moor_ffi))
@@ -271,7 +272,7 @@ class DriftAnalysisDriver {
         if (e is! CouldNotResolveElementException) {
           backend.log.warning('Could not analyze $id', e, s);
 
-          if (_isTesting) rethrow;
+          if (isTesting) rethrow;
         }
 
         return null;
@@ -283,15 +284,12 @@ class DriftAnalysisDriver {
   /// necessary work up until that point.
   Future<FileState> resolveElements(Uri uri) async {
     var known = cache.stateForUri(uri);
-    if (known.isFullyAnalyzed) {
-      // Well, there's nothing to do now.
-      return known;
+    if (!known.isFullyAnalyzed) {
+      // We couldn't recover all analyzed elements. Let's run an analysis run
+      // then.
+      await findLocalElements(uri);
+      await _warnAboutUnresolvedImportsInDriftFile(known);
     }
-
-    // We couldn't recover all analyzed elements. Let's run an analysis run
-    // then.
-    await findLocalElements(uri);
-    await _warnAboutUnresolvedImportsInDriftFile(known);
 
     // Also make sure elements in transitive imports have been resolved.
     final seen = <Uri>{};

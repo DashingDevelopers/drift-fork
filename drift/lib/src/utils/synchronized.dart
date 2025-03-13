@@ -11,10 +11,32 @@ class Lock {
     // This completer may not be sync: It must complete just after
     // callBlockAndComplete completes.
     final blockCompleted = Completer<void>();
-    _last = blockCompleted.future;
+    final blockReleasedLock = blockCompleted.future;
+    _last = blockReleasedLock;
 
     Future<T> callBlockAndComplete() {
-      return Future.sync(block).whenComplete(blockCompleted.complete);
+      return Future.sync(block).whenComplete(() {
+        blockCompleted.complete();
+
+        if (identical(_last, blockReleasedLock)) {
+          // There's no subsequent waiter entering the lock now, so we can reset
+          // the entire state.
+          _last = null;
+
+          // This doesn't affect the correctness of the lock, but is helpful
+          // when drift is used in `fake_async` scenarios but then cleaned up
+          // outside of that `fake_async` scope (a very common pattern in
+          // Flutter widget tests).
+          // Waiting on `previous.then` on a completed `previous` future will
+          // schedule a microtask, so if we call synchronized in a zone outside
+          // of fake_async and the lock was previously locked in a fake_async
+          // zone, that microtask might not run if no one completes the pending
+          // fake_async microtasks.
+          // Since the lock is idle anyway, the next waiter can just call
+          // callBlockAndComplete() directly without calling `.then()` on a
+          // future that will no longer notify listeners.
+        }
+      });
     }
 
     if (previous != null) {

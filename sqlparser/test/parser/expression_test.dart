@@ -1,4 +1,4 @@
-import 'package:sqlparser/src/ast/ast.dart';
+import 'package:sqlparser/sqlparser.dart';
 import 'package:sqlparser/src/reader/parser.dart';
 import 'package:sqlparser/src/reader/tokenizer/scanner.dart';
 import 'package:sqlparser/src/utils/ast_equality.dart';
@@ -48,7 +48,7 @@ final Map<String, Expression> _testCases = {
       NumberedVariable(2),
     ),
     token(TokenType.doubleEqual),
-    ColonNamedVariable(ColonVariableToken(fakeSpan(':test'), ':test')),
+    NamedVariable(ColonVariableToken(fakeSpan(':test'), 'test')),
   ),
   'CASE x WHEN a THEN b WHEN c THEN d ELSE e END': CaseExpression(
     base: Reference(columnName: 'x'),
@@ -236,6 +236,31 @@ void main() {
         enforceHasSpan(expression);
         enforceEqual(expression, expected);
       });
+    });
+  });
+
+  group('named variables', () {
+    test('support all kinds when not in drift mode', () {
+      for (final prefix in [':', '@', r'$']) {
+        final result = SqlEngine().parse('SELECT ${prefix}name;');
+        final value = ((result.rootNode as SelectStatement).columns.single
+                as ExpressionResultColumn)
+            .expression as NamedVariable;
+
+        expect(value.name, 'name');
+        expect(value.fullName, '${prefix}name');
+      }
+    });
+
+    test('does not parse at and dollar signs as variables in drift mode', () {
+      final engine = SqlEngine(EngineOptions(driftOptions: DriftSqlOptions()));
+      expect(engine.parse('SELECT @name').rootNode, isA<InvalidStatement>());
+
+      final result = engine.parse(r'SELECT $name;');
+      final value = ((result.rootNode as SelectStatement).columns.single
+              as ExpressionResultColumn)
+          .expression;
+      expect(value, isA<DartExpressionPlaceholder>());
     });
   });
 }

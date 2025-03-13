@@ -61,9 +61,11 @@ class ViewWriter extends TableOrViewWriter {
         final table = ref.table;
         final alias = asDartLiteral('t${tableCounter++}');
 
-        final declaration = '${table.entityInfoName} get ${ref.name} => '
-            'attachedDatabase.${table.dbGetterName}.createAlias($alias);';
-        buffer.writeln(declaration);
+        emitter
+          ..writeDart(emitter.entityInfoType(table))
+          ..write(' get ${ref.name} => ')
+          ..writeDart(emitter.referenceElement(ref.table, 'attachedDatabase'))
+          ..writeln('.createAlias($alias);');
       }
     }
 

@@ -1,8 +1,8 @@
 import 'package:analyzer/dart/analysis/analysis_context.dart';
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
-import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/file_system/file_system.dart';
 import 'package:analyzer/file_system/overlay_file_system.dart';
 import 'package:analyzer/file_system/physical_file_system.dart';
@@ -111,12 +111,17 @@ class AnalysisContextBackend extends DriftBackend {
 
   @override
   Future<Expression> resolveExpression(
-      Uri context, String dartExpression, Iterable<String> imports) async {
+    Uri context,
+    String dartExpression,
+    Iterable<String> imports,
+  ) async {
     // Create a fake file next to the content
     final path = _pathOfUri(context)!;
     final pathContext = provider.pathContext;
     final pathForTemp = pathContext.join(
-        pathContext.dirname(path), 'moor_temp_${dartExpression.hashCode}.dart');
+      pathContext.dirname(path),
+      'moor_temp_${dartExpression.hashCode}.dart',
+    );
 
     final content = StringBuffer();
     for (final import in imports) {
@@ -179,7 +184,9 @@ class AnalysisContextBackend extends DriftBackend {
           await this.context.currentSession.getResolvedLibrary(pathForTemp);
 
       if (result is ResolvedLibraryResult) {
-        return result.element.scope.lookup(reference).getter;
+        return result.element.definingCompilationUnit.scope
+            .lookup(reference)
+            .getter;
       }
     } finally {
       provider.removeOverlay(path);

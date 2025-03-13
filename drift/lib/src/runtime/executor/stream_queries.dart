@@ -5,6 +5,7 @@ import 'package:collection/collection.dart';
 import 'package:drift/drift.dart';
 import 'package:meta/meta.dart';
 
+import '../api/runtime_api.dart';
 import '../cancellation_zone.dart';
 
 const _listEquality = ListEquality<Object?>();
@@ -15,7 +16,7 @@ const _listEquality = ListEquality<Object?>();
 /// Representation of a select statement that knows from which tables the
 /// statement is reading its data and how to execute the query.
 @internal
-class QueryStreamFetcher {
+class QueryStreamFetcher<Rows extends Object> {
   /// Table updates that will affect this stream.
   ///
   /// If any of these tables changes, the stream must fetch its data again.
@@ -23,13 +24,20 @@ class QueryStreamFetcher {
 
   /// Key that can be used to check whether two fetchers will yield the same
   /// result when operating on the same data.
+  ///
+  /// When not null, [Rows] must be `List<Map<String, Object?>>` (the most
+  /// common form used for all queries except for manager queries with
+  /// prefetches).
   final StreamKey? key;
 
   /// Function that asynchronously fetches the latest set of data.
-  final Future<List<Map<String, Object?>>> Function() fetchData;
+  final Future<Rows> Function() fetchData;
 
-  QueryStreamFetcher(
-      {required this.readsFrom, this.key, required this.fetchData});
+  QueryStreamFetcher({
+    required this.readsFrom,
+    this.key,
+    required this.fetchData,
+  });
 }
 
 /// Key that uniquely identifies a select statement. If two keys created from
@@ -67,6 +75,7 @@ class StreamQueryStore {
   final HashSet<StreamKey?> _keysPendingRemoval = HashSet<StreamKey?>();
 
   bool _isShuttingDown = false;
+  final bool _closeStreamsSynchronously;
 
   // we track pending timers since Flutter throws an exception when timers
   // remain after a test run.
@@ -80,21 +89,24 @@ class StreamQueryStore {
   final StreamController<Set<TableUpdate>> _tableUpdates =
       StreamController.broadcast(sync: true);
 
+  StreamQueryStore({bool closeStreamsSynchronously = false})
+      : _closeStreamsSynchronously = closeStreamsSynchronously;
+
   /// Creates a new stream from the select statement.
-  Stream<List<Map<String, Object?>>> registerStream(
-      QueryStreamFetcher fetcher) {
+  Stream<T> registerStream<T extends Object>(
+      QueryStreamFetcher<T> fetcher, DatabaseConnectionUser database) {
     final key = fetcher.key;
 
     if (key != null) {
       final cached = _activeKeyStreams[key];
       if (cached != null) {
-        return cached._stream;
+        return cached._stream as Stream<T>;
       }
     }
 
     // no cached instance found, create a new stream and register it so later
     // requests with the same key can be cached.
-    final stream = QueryStream(fetcher, this);
+    final stream = QueryStream<T>(fetcher, this, database);
     // todo this adds the stream to a map, where it will only be removed when
     // somebody listens to it and later calls .cancel(). Failing to do so will
     // cause a memory leak. Is there any way we can work around it? Perhaps a
@@ -121,6 +133,12 @@ class StreamQueryStore {
     if (_isShuttingDown) return;
 
     final key = stream._fetcher.key;
+    if (_closeStreamsSynchronously) {
+      whenRemoved();
+      _activeKeyStreams.remove(key);
+      return;
+    }
+
     _keysPendingRemoval.add(key);
 
     // sync because it's only triggered after the timer
@@ -174,11 +192,10 @@ class StreamQueryStore {
   }
 }
 
-typedef _Row = List<Map<String, Object?>>;
-
-class QueryStream {
-  final QueryStreamFetcher _fetcher;
+class QueryStream<Rows extends Object> {
+  final QueryStreamFetcher<Rows> _fetcher;
   final StreamQueryStore _store;
+  final DatabaseConnectionUser _database;
 
   final List<_QueryStreamListener> _listeners = [];
   int _pausedListeners = 0;
@@ -187,7 +204,7 @@ class QueryStream {
 
   // We're using a Stream.multi to implement a broadcast-ish stream with per-
   // subscription pauses.
-  late final Stream<_Row> _stream = Stream.multi(
+  late final Stream<Rows> _stream = Stream.multi(
     (listener) {
       final queryListener = _QueryStreamListener(listener);
 
@@ -230,13 +247,13 @@ class QueryStream {
 
   StreamSubscription? _tablesChangedSubscription;
 
-  List<Map<String, Object?>>? _lastData;
+  Rows? _lastData;
   final List<CancellationToken> _runningOperations = [];
   bool _isClosed = false;
 
   bool get hasKey => _fetcher.key != null;
 
-  QueryStream(this._fetcher, this._store);
+  QueryStream(this._fetcher, this._store, this._database);
 
   void _onListenOrResume(_QueryStreamListener newListener) {
     // First listener, start fetching data
@@ -307,10 +324,20 @@ class QueryStream {
   }
 
   Future<void> fetchAndEmitData() async {
-    final operation = runCancellable(_fetcher.fetchData);
+    final operation = CancellationToken<Rows>();
     _runningOperations.add(operation);
 
     try {
+      if (!_database.isOpen) {
+        // We should make sure the database has been opened before using
+        // runCancellable! The first statement on the database is responsible
+        // for opening it (which includes running migrations), a process that
+        // must not be cancelled.
+        await _database.resolvedEngine.doWhenOpened((_) {});
+      }
+
+      if (operation.isCancelled) return;
+      runCancellable<Rows>(_fetcher.fetchData, token: operation);
       final data = await operation.resultOrNullIfCancelled;
       if (data == null) return;
 
@@ -340,14 +367,14 @@ class QueryStream {
   }
 }
 
-class _QueryStreamListener {
-  final MultiStreamController<_Row> controller;
-  _Row? lastEvent;
+class _QueryStreamListener<Rows> {
+  final MultiStreamController<Rows> controller;
+  Rows? lastEvent;
   bool isPaused = false;
 
   _QueryStreamListener(this.controller);
 
-  void add(_Row row) {
+  void add(Rows row) {
     // Don't emit events that have already been dispatched to this listener.
     if (!identical(row, lastEvent)) {
       lastEvent = row;

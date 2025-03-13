@@ -11,6 +11,13 @@ abstract class DatabaseConnectionUser {
   @protected
   final DatabaseConnection connection;
 
+  /// Whether [doWhenOpened] has been called and completed at least once.
+  ///
+  /// This can serve as an optimization setups requiring direct access to the
+  /// underlying [executor] that want to avoid the asynchronous suspension
+  /// around open checks if possible.
+  bool _isOpen = false;
+
   /// The [DriftDatabaseOptions] to use for this database instance.
   ///
   /// Mainly, these options describe how values are mapped from Dart to SQL
@@ -56,8 +63,8 @@ abstract class DatabaseConnectionUser {
 
   /// Creates and auto-updating stream from the given select statement. This
   /// method should not be used directly.
-  Stream<List<Map<String, Object?>>> createStream(QueryStreamFetcher stmt) =>
-      resolvedEngine.streamQueries.registerStream(stmt);
+  Stream<T> createStream<T extends Object>(QueryStreamFetcher<T> stmt) =>
+      resolvedEngine.streamQueries.registerStream(stmt, this);
 
   /// Creates a copy of the table with an alias so that it can be used in the
   /// same query more than once.
@@ -159,7 +166,10 @@ abstract class DatabaseConnectionUser {
   /// Calling this method directly might circumvent the current transaction. For
   /// that reason, it should only be called inside drift.
   Future<T> doWhenOpened<T>(FutureOr<T> Function(QueryExecutor e) fn) {
-    return executor.ensureOpen(attachedDatabase).then((_) => fn(executor));
+    return executor.ensureOpen(attachedDatabase).then((_) {
+      _isOpen = true;
+      return fn(executor);
+    });
   }
 
   /// Starts an [InsertStatement] for a given table. You can use that statement
@@ -241,9 +251,31 @@ abstract class DatabaseConnectionUser {
     return JoinedSelectStatement<T, R>(this, table, [], distinct, false, false);
   }
 
+  /// Creates a select statement without a `FROM` clause selecting [columns].
+  ///
+  /// In SQL, select statements without a table will return a single row where
+  /// all the [columns] are evaluated. Of course, columns cannot refer to
+  /// columns from a table as these are unavailable without a `FROM` clause.
+  ///
+  /// To run or watch the select statement, call [Selectable.get] or
+  /// [Selectable.watch]. Each returns a list of [TypedResult] rows, for which
+  /// a column can be read with [TypedResult.read].
+  ///
+  /// This example uses [selectExpressions] to query the current time set on the
+  /// database server:
+  ///
+  /// ```dart
+  /// final row = await selectExpressions([currentDateAndTime]).getSingle();
+  /// final databaseTime = row.read(currentDateAndTime)!;
+  /// ```
+  BaseSelectStatement<TypedResult> selectExpressions(
+      Iterable<Expression> columns) {
+    return SelectWithoutTables(this, columns);
+  }
+
   /// Starts a [DeleteStatement] that can be used to delete rows from a table.
   ///
-  /// See the [documentation](https://drift.simonbinder.eu/docs/getting-started/writing_queries/#updates-and-deletes)
+  /// See the [documentation](https://drift.simonbinder.eu/docs/dart-api/writes/#updates-and-deletes)
   /// for more details and example on how delete statements work.
   DeleteStatement<T, D> delete<T extends Table, D>(TableInfo<T, D> table) {
     return DeleteStatement<T, D>(this, table);
@@ -260,7 +292,7 @@ abstract class DatabaseConnectionUser {
   Future<int> customUpdate(
     String query, {
     List<Variable> variables = const [],
-    Set<TableInfo>? updates,
+    Set<ResultSetImplementation>? updates,
     UpdateKind? updateKind,
   }) async {
     return _customWrite(
@@ -280,7 +312,8 @@ abstract class DatabaseConnectionUser {
   /// [updates] parameter. Query-streams running on any of these tables will
   /// then be re-run.
   Future<int> customInsert(String query,
-      {List<Variable> variables = const [], Set<TableInfo>? updates}) {
+      {List<Variable> variables = const [],
+      Set<ResultSetImplementation>? updates}) {
     return _customWrite(
       query,
       variables,
@@ -303,7 +336,7 @@ abstract class DatabaseConnectionUser {
   Future<List<QueryRow>> customWriteReturning(
     String query, {
     List<Variable> variables = const [],
-    Set<TableInfo>? updates,
+    Set<ResultSetImplementation>? updates,
     UpdateKind? updateKind,
   }) {
     return _customWrite(query, variables, updates, updateKind,
@@ -319,7 +352,7 @@ abstract class DatabaseConnectionUser {
   Future<T> _customWrite<T>(
     String query,
     List<Variable> variables,
-    Set<TableInfo>? updates,
+    Set<ResultSetImplementation>? updates,
     UpdateKind? updateKind,
     _CustomWriter<T> writer,
   ) async {
@@ -334,7 +367,7 @@ abstract class DatabaseConnectionUser {
     if (updates != null) {
       engine.notifyUpdates({
         for (final table in updates)
-          TableUpdate(table.actualTableName, kind: updateKind),
+          TableUpdate(table.entityName, kind: updateKind),
       });
     }
 
@@ -382,6 +415,11 @@ abstract class DatabaseConnectionUser {
   /// [statement] should contain exactly one SQL statement. Attempting to run
   /// multiple statements with a single [customStatement] may not be fully
   /// supported on all platforms.
+  ///
+  /// This method does not update stream queries on this drift database. To run
+  /// custom statements that update data, please use [customInsert] or
+  /// [customUpdate] instead. You can also call [markTablesUpdated] manually
+  /// after awaiting [customStatement].
   Future<void> customStatement(String statement, [List<dynamic>? args]) {
     final engine = resolvedEngine;
 
@@ -461,6 +499,8 @@ abstract class DatabaseConnectionUser {
 
       return _runConnectionZoned(transaction, () async {
         var success = false;
+
+        await transactionExecutor.ensureOpen(attachedDatabase);
         try {
           final result = await action();
           success = true;
@@ -483,6 +523,60 @@ abstract class DatabaseConnectionUser {
           await transaction.disposeChildStreams();
         }
       });
+    });
+  }
+
+  /// Obtains an exclusive lock on the current database context, runs [action]
+  /// in it and then releases the lock.
+  ///
+  /// This obtains a local lock on the underlying [executor] without starting a
+  /// transaction or coordinating with other processes on the same database.
+  /// It is possible to start a [transaction] within an [exclusively] block.
+  /// When [exclusively] is called on a database connected to a remote isolate
+  /// or a shared web worker, other isolates and tabs will be blocked on the
+  /// database until the returned future completes.
+  ///
+  /// With sqlite3, [exclusively] is useful to set certain pragmas like
+  /// `foreign_keys` which can't be done in a transaction for a limited scope.
+  /// For instance, some migrations may look like this:
+  ///
+  /// ```dart
+  /// await exclusively(() async {
+  ///   await customStatement('pragma foreign_keys = OFF;');
+  ///   await transaction(() async {
+  ///     // complex updates or migrations temporarily breaking foreign
+  ///     // references...
+  ///   });
+  ///   await customStatement('pragma foreign_keys = OFF;');
+  /// });
+  /// ```
+  ///
+  /// If the [exclusively] block had been omitted from the previous snippet,
+  /// it would have been possible for other concurrent database calls to occur
+  /// between the transaction and the `pragma` statements.
+  ///
+  /// Outside of blocks requiring exclusive access to set pragmas not supported
+  /// in transactions, consider using [transaction] instead of [exclusively].
+  /// Transactions also take exclusive control over the database, but they also
+  /// are atomic (either all statements in a transaction complete or none at
+  /// all), whereas an error in an [exclusively] block does not roll back
+  /// earlier statements.
+  Future<T> exclusively<T>(Future<T> Function() action) async {
+    return await resolvedEngine.doWhenOpened((executor) {
+      final exclusive = executor.beginExclusive();
+
+      return _runConnectionZoned(
+        _ExclusiveExecutor(this, executor: exclusive),
+        () async {
+          await exclusive.ensureOpen(attachedDatabase);
+
+          try {
+            return await action();
+          } finally {
+            exclusive.close();
+          }
+        },
+      );
     });
   }
 
@@ -522,6 +616,19 @@ abstract class DatabaseConnectionUser {
     } else {
       return batch._commit();
     }
+  }
+
+  /// Executes [action] with calls intercepted by the given [interceptor]
+  ///
+  /// This can be used to, for instance, write a custom statement logger or to
+  /// retry failing statements automatically.
+  Future<T> runWithInterceptor<T>(Future<T> Function() action,
+      {required QueryInterceptor interceptor}) async {
+    return await resolvedEngine.doWhenOpened((executor) {
+      final inner = _ExclusiveExecutor(this,
+          executor: executor.interceptWith(interceptor));
+      return _runConnectionZoned(inner, action);
+    });
   }
 
   /// Runs [calculation] in a forked [Zone] that has its [resolvedEngine] set
@@ -609,7 +716,7 @@ extension on TransactionExecutor {
 ///
 /// This is only used by the DevTools extension.
 @internal
-extension RunWithEngine on DatabaseConnectionUser {
+extension InternalConnectionUserApi on DatabaseConnectionUser {
   /// Call the private [_runConnectionZoned] method.
   Future<T> runConnectionZoned<T>(
       DatabaseConnectionUser user, Future<T> Function() calculation) {
@@ -620,4 +727,15 @@ extension RunWithEngine on DatabaseConnectionUser {
     final engine = resolvedEngine;
     return engine.doWhenOpened(run);
   }
+
+  bool get isOpen => _isOpen;
+}
+
+class _ExclusiveExecutor extends DatabaseConnectionUser {
+  @override
+  final GeneratedDatabase attachedDatabase;
+
+  _ExclusiveExecutor(super.other, {super.executor})
+      : attachedDatabase = other.attachedDatabase,
+        super.delegate();
 }

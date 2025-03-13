@@ -44,14 +44,14 @@ class _MoorFfiFunctions with ArgumentCountLinter implements FunctionHandler {
 
   @override
   ResolveResult inferArgumentType(
-      AnalysisContext context, SqlInvocation call, Expression argument) {
+      TypeInferenceSession session, SqlInvocation call, Expression argument) {
     return const ResolveResult(
         ResolvedType(type: BasicType.real, nullable: false));
   }
 
   @override
-  ResolveResult inferReturnType(AnalysisContext context, SqlInvocation call,
-      List<Typeable> expandedArgs) {
+  ResolveResult inferReturnType(TypeInferenceSession session,
+      SqlInvocation call, List<Typeable> expandedArgs) {
     if (call.name == 'current_time_millis') {
       return const ResolveResult(
           ResolvedType(type: BasicType.int, nullable: false));

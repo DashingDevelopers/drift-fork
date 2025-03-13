@@ -54,6 +54,10 @@ class ElementSerializer {
         ],
         'custom_parent_class':
             _serializeCustomParentClass(element.customParentClass),
+        'interfaces_for_row_class': [
+          for (final implements in element.interfacesForRowClass)
+            implements.toJson(),
+        ],
         'fixed_entity_info_name': element.fixedEntityInfoName,
         'base_dart_name': element.baseDartName,
         'row_class_name': element.nameOfRowClass,
@@ -144,6 +148,10 @@ class ElementSerializer {
         'existing_data_class': element.existingRowClass != null
             ? _serializeExistingRowClass(element.existingRowClass!)
             : null,
+        'interfaces_for_row_class': [
+          for (final implements in element.interfacesForRowClass)
+            implements.toJson(),
+        ],
         'custom_parent_class':
             _serializeCustomParentClass(element.customParentClass),
         'name_of_row_class': element.nameOfRowClass,
@@ -182,6 +190,7 @@ class ElementSerializer {
           'daos': [
             for (final dao in element.accessors) _serializeElementReference(dao)
           ],
+          'has_constructor_arg': element.hasConstructorArgumentForConnection,
         }
       };
     } else {
@@ -248,6 +257,7 @@ class ElementSerializer {
         'column': _serializeColumnReference(constraint.otherColumn),
         'onUpdate': _serializeReferenceAction(constraint.onUpdate),
         'onDelete': _serializeReferenceAction(constraint.onDelete),
+        'initiallyDeferred': constraint.initiallyDeferred,
       };
     } else if (constraint is ColumnGeneratedAs) {
       return {'type': 'generated_as', ...constraint.toJson()};
@@ -287,6 +297,7 @@ class ElementSerializer {
         ],
         'onUpdate': _serializeReferenceAction(constraint.onUpdate),
         'onDelete': _serializeReferenceAction(constraint.onDelete),
+        'initiallyDeferred': constraint.initiallyDeferred,
       };
     } else {
       throw UnimplementedError('Unsupported table constraint: $constraint');
@@ -338,6 +349,7 @@ class ElementSerializer {
       'sql_type': _serializeColumnType(converter.sqlType),
       'dart_type_is_nullable': converter.dartTypeIsNullable,
       'sql_type_is_nullable': converter.sqlTypeIsNullable,
+      'json_type_is_nullable': converter.jsonTypeIsNullable,
       'is_drift_enum_converter': converter.isDriftEnumTypeConverter,
       if (converter.owningColumn != appliedTo)
         'owner': _serializeColumnReference(converter.owningColumn!),
@@ -352,6 +364,7 @@ class ElementSerializer {
       'is_async_factory': existing.isAsyncFactory,
       'positional': existing.positionalColumns,
       'named': existing.namedColumns,
+      'getters': existing.columnGetters,
       'generate_insertable': existing.generateInsertable,
     };
   }
@@ -423,7 +436,7 @@ class ElementDeserializer {
 
     if (_currentlyReading.contains(id)) {
       throw StateError(
-          'Circular error when deserializing drift modules. This is a '
+          'Circular error when deserializing drift modules (cycle: $_currentlyReading -> $id). This is a '
           'bug in drift_dev!');
     }
 
@@ -536,6 +549,10 @@ class ElementDeserializer {
           ],
           customParentClass:
               _readCustomParentClass(json['custom_parent_class'] as Map?),
+          interfacesForRowClass: [
+            for (final entry in json['interfaces_for_row_class'] as List)
+              AnnotatedDartCode.fromJson(entry as Map)
+          ],
           fixedEntityInfoName: json['fixed_entity_info_name'] as String?,
           baseDartName: json['base_dart_name'] as String,
           nameOfRowClass: json['row_class_name'] as String,
@@ -560,6 +577,7 @@ class ElementDeserializer {
                     (e) => e.nameInSql == constraint.referencedColumn),
                 constraint.onUpdate,
                 constraint.onDelete,
+                constraint.initiallyDeferred,
               );
             }
           }
@@ -611,10 +629,11 @@ class ElementDeserializer {
           dartTypes: types,
         );
       case 'trigger':
-        DriftTable? on;
+        DriftElementWithResultSet? on;
 
         if (json['on'] != null) {
-          on = await _readElementReference(json['on'] as Map) as DriftTable;
+          on = await _readElementReference(json['on'] as Map)
+              as DriftElementWithResultSet;
         }
 
         return DriftTrigger(
@@ -628,7 +647,7 @@ class ElementDeserializer {
             for (final write in json.list('writes').cast<Map>())
               WrittenDriftTable(
                 await _readElementReference(write['table'] as Map)
-                    as DriftTable,
+                    as DriftElementWithResultSet,
                 UpdateKind.values.byName(write['kind'] as String),
               )
           ],
@@ -648,7 +667,7 @@ class ElementDeserializer {
         } else if (sourceKind == 'dart') {
           TableReferenceInDartView readReference(Map json) {
             final id = DriftElementId.fromJson(json['table'] as Map);
-            final reference = references.singleWhere((e) => e.id == id);
+            final reference = references.firstWhere((e) => e.id == id);
             return TableReferenceInDartView(
                 reference as DriftTable, json['name'] as String);
           }
@@ -678,8 +697,12 @@ class ElementDeserializer {
           entityInfoName: json['entity_info_name'] as String,
           customParentClass:
               _readCustomParentClass(json['custom_parent_class'] as Map?),
+          interfacesForRowClass: [
+            for (final entry in json['interfaces_for_row_class'] as List)
+              AnnotatedDartCode.fromJson(entry as Map)
+          ],
           nameOfRowClass: json['name_of_row_class'] as String,
-          nameOfCompanionClass: json['name_of_companion_class'] as String,
+          nameOfCompanionClass: json['name_of_companion_class'] as String?,
           existingRowClass: json['existing_data_class'] != null
               ? await _readExistingRowClass(
                   id.libraryUri, json['existing_data_class'] as Map)
@@ -721,6 +744,8 @@ class ElementDeserializer {
                 await _readElementReference(dao as Map<String, Object?>)
                     as DatabaseAccessor,
             ],
+            hasConstructorArgumentForConnection:
+                json['has_constructor_arg'] as bool,
           );
         } else {
           assert(type == 'dao');
@@ -742,10 +767,10 @@ class ElementDeserializer {
   }
 
   Future<ColumnType> _readColumnType(Map json, Uri definition) async {
-    if (json.containsKey('custom')) {
+    if (json['custom'] case final customType?) {
       return ColumnType.custom(CustomColumnType(
-        AnnotatedDartCode.fromJson(json['expression'] as Map),
-        await _readDartType(definition, json['dart'] as int),
+        AnnotatedDartCode.fromJson(customType['expression'] as Map),
+        await _readDartType(definition, customType['dart'] as int),
       ));
     } else {
       return ColumnType.drift(
@@ -801,6 +826,7 @@ class ElementDeserializer {
       sqlType: await _readColumnType(json['sql_type'] as Map, definition),
       dartTypeIsNullable: json['dart_type_is_nullable'] as bool,
       sqlTypeIsNullable: json['sql_type_is_nullable'] as bool,
+      jsonTypeIsNullable: json['json_type_is_nullable'] as bool,
       isDriftEnumTypeConverter: json['is_drift_enum_converter'] as bool,
     );
 
@@ -821,6 +847,7 @@ class ElementDeserializer {
       positionalColumns: (json['positional'] as List).cast(),
       namedColumns: (json['named'] as Map).cast(),
       generateInsertable: json['generate_insertable'] as bool,
+      columnGetters: (json['getters'] as Map).cast(),
     );
   }
 
@@ -853,12 +880,14 @@ class ElementDeserializer {
             json['column']['name'] as String,
             _readAction(json['onUpdate'] as String?),
             _readAction(json['onDelete'] as String?),
+            json['initiallyDeferred'] as bool,
           );
         } else {
           return ForeignKeyReference(
             await _readDriftColumnReference(json['column'] as Map),
             _readAction(json['onUpdate'] as String?),
             _readAction(json['onDelete'] as String?),
+            json['initiallyDeferred'] as bool,
           );
         }
       case 'generated_as':
@@ -898,6 +927,7 @@ class ElementDeserializer {
           ],
           onUpdate: _readAction(json['onUpdate'] as String?),
           onDelete: _readAction(json['onDelete'] as String?),
+          initiallyDeferred: json['initiallyDeferred'] as bool,
         );
       default:
         throw UnimplementedError('Unsupported constraint: $type');
@@ -921,7 +951,12 @@ class CouldNotDeserializeException implements Exception {
 class _PendingReferenceToOwnTable extends DriftColumnConstraint {
   final String referencedColumn;
   final ReferenceAction? onUpdate, onDelete;
+  final bool initiallyDeferred;
 
   _PendingReferenceToOwnTable(
-      this.referencedColumn, this.onUpdate, this.onDelete);
+    this.referencedColumn,
+    this.onUpdate,
+    this.onDelete,
+    this.initiallyDeferred,
+  );
 }

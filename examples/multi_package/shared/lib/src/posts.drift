@@ -4,3 +4,7 @@ CREATE TABLE posts (
   author INTEGER NOT NULL REFERENCES users (id),
   content TEXT
 );
+
+allPosts: SELECT posts.**, author.** FROM posts
+  INNER JOIN users AS author ON author.id = posts.author
+  LIMIT $limit;

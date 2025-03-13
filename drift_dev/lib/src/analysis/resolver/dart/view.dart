@@ -31,6 +31,7 @@ class DartViewResolver extends LocalElementResolver<DiscoveredDartView> {
           dataClassNameForClassName(discovered.dartElement.name),
       existingRowClass: dataClassInfo.existingClass,
       customParentClass: dataClassInfo.extending,
+      interfacesForRowClass: dataClassInfo.interfaces,
       entityInfoName: '\$${discovered.dartElement.name}View',
       source: DartViewSource(structure.dartQuerySource, structure.primarySource,
           staticReferences, structure.staticSource),
@@ -57,7 +58,9 @@ class DartViewResolver extends LocalElementResolver<DiscoveredDartView> {
     final typeSystem = field.library.typeSystem;
 
     if (type is! InterfaceType ||
-        !typeSystem.isAssignableTo(type, knownTypes.tableType)) return null;
+        !typeSystem.isAssignableTo(type, knownTypes.tableType)) {
+      return null;
+    }
 
     if (field.getter != null) {
       try {
@@ -228,13 +231,14 @@ class DartViewResolver extends LocalElementResolver<DiscoveredDartView> {
 
         final column = reference.table.columns
             .firstWhere((col) => col.nameInDart == parts[1]);
+        final (:dart, :sql) = structure.uniqueColumnName(column);
 
         columns.add(DriftColumn(
           declaration: DriftDeclaration.dartElement(discovered.dartElement),
           sqlType: column.sqlType,
           nullable: column.nullable || structure.referenceIsNullable(reference),
-          nameInDart: column.nameInDart,
-          nameInSql: column.nameInSql,
+          nameInDart: dart,
+          nameInSql: sql,
           constraints: [
             ColumnGeneratedAs(
                 AnnotatedDartCode.build(
@@ -320,6 +324,7 @@ class _ParsedDartViewSelect {
 
   final List<Expression> selectedColumns;
   final AnnotatedDartCode dartQuerySource;
+  final Set<String> columnNames = {};
 
   final String? staticSource;
   _ParsedDartViewSelect(this.primarySource, this.innerJoins, this.outerJoins,
@@ -328,5 +333,20 @@ class _ParsedDartViewSelect {
 
   bool referenceIsNullable(TableReferenceInDartView ref) {
     return ref != primarySource && !innerJoins.contains(ref);
+  }
+
+  ({String dart, String sql}) uniqueColumnName(DriftColumn source) {
+    final name = source.nameInDart;
+    if (columnNames.add(name)) {
+      // No conflicting column exists.
+      return (dart: name, sql: source.nameInSql);
+    }
+
+    var suffix = 1;
+    while (!columnNames.add('$name$suffix')) {
+      suffix++;
+    }
+
+    return (dart: '$name$suffix', sql: '${source.nameInSql}$suffix');
   }
 }

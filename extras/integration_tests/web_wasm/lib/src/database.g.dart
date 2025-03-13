@@ -107,6 +107,13 @@ class TestTableData extends DataClass implements Insertable<TestTableData> {
         id: id ?? this.id,
         content: content ?? this.content,
       );
+  TestTableData copyWithCompanion(TestTableCompanion data) {
+    return TestTableData(
+      id: data.id.present ? data.id.value : this.id,
+      content: data.content.present ? data.content.value : this.content,
+    );
+  }
+
   @override
   String toString() {
     return (StringBuffer('TestTableData(')
@@ -178,7 +185,7 @@ class TestTableCompanion extends UpdateCompanion<TestTableData> {
 
 abstract class _$TestDatabase extends GeneratedDatabase {
   _$TestDatabase(QueryExecutor e) : super(e);
-  _$TestDatabaseManager get managers => _$TestDatabaseManager(this);
+  $TestDatabaseManager get managers => $TestDatabaseManager(this);
   late final $TestTableTable testTable = $TestTableTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
@@ -187,7 +194,7 @@ abstract class _$TestDatabase extends GeneratedDatabase {
   List<DatabaseSchemaEntity> get allSchemaEntities => [testTable];
 }
 
-typedef $$TestTableTableInsertCompanionBuilder = TestTableCompanion Function({
+typedef $$TestTableTableCreateCompanionBuilder = TestTableCompanion Function({
   Value<int> id,
   required String content,
 });
@@ -196,26 +203,80 @@ typedef $$TestTableTableUpdateCompanionBuilder = TestTableCompanion Function({
   Value<String> content,
 });
 
+class $$TestTableTableFilterComposer
+    extends Composer<_$TestDatabase, $TestTableTable> {
+  $$TestTableTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get content => $composableBuilder(
+      column: $table.content, builder: (column) => ColumnFilters(column));
+}
+
+class $$TestTableTableOrderingComposer
+    extends Composer<_$TestDatabase, $TestTableTable> {
+  $$TestTableTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get content => $composableBuilder(
+      column: $table.content, builder: (column) => ColumnOrderings(column));
+}
+
+class $$TestTableTableAnnotationComposer
+    extends Composer<_$TestDatabase, $TestTableTable> {
+  $$TestTableTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get content =>
+      $composableBuilder(column: $table.content, builder: (column) => column);
+}
+
 class $$TestTableTableTableManager extends RootTableManager<
     _$TestDatabase,
     $TestTableTable,
     TestTableData,
     $$TestTableTableFilterComposer,
     $$TestTableTableOrderingComposer,
-    $$TestTableTableProcessedTableManager,
-    $$TestTableTableInsertCompanionBuilder,
-    $$TestTableTableUpdateCompanionBuilder> {
+    $$TestTableTableAnnotationComposer,
+    $$TestTableTableCreateCompanionBuilder,
+    $$TestTableTableUpdateCompanionBuilder,
+    (
+      TestTableData,
+      BaseReferences<_$TestDatabase, $TestTableTable, TestTableData>
+    ),
+    TestTableData,
+    PrefetchHooks Function()> {
   $$TestTableTableTableManager(_$TestDatabase db, $TestTableTable table)
       : super(TableManagerState(
           db: db,
           table: table,
-          filteringComposer:
-              $$TestTableTableFilterComposer(ComposerState(db, table)),
-          orderingComposer:
-              $$TestTableTableOrderingComposer(ComposerState(db, table)),
-          getChildManagerBuilder: (p) =>
-              $$TestTableTableProcessedTableManager(p),
-          getUpdateCompanionBuilder: ({
+          createFilteringComposer: () =>
+              $$TestTableTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$TestTableTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$TestTableTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
             Value<int> id = const Value.absent(),
             Value<String> content = const Value.absent(),
           }) =>
@@ -223,7 +284,7 @@ class $$TestTableTableTableManager extends RootTableManager<
             id: id,
             content: content,
           ),
-          getInsertCompanionBuilder: ({
+          createCompanionCallback: ({
             Value<int> id = const Value.absent(),
             required String content,
           }) =>
@@ -231,52 +292,32 @@ class $$TestTableTableTableManager extends RootTableManager<
             id: id,
             content: content,
           ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
         ));
 }
 
-class $$TestTableTableProcessedTableManager extends ProcessedTableManager<
+typedef $$TestTableTableProcessedTableManager = ProcessedTableManager<
     _$TestDatabase,
     $TestTableTable,
     TestTableData,
     $$TestTableTableFilterComposer,
     $$TestTableTableOrderingComposer,
-    $$TestTableTableProcessedTableManager,
-    $$TestTableTableInsertCompanionBuilder,
-    $$TestTableTableUpdateCompanionBuilder> {
-  $$TestTableTableProcessedTableManager(super.$state);
-}
+    $$TestTableTableAnnotationComposer,
+    $$TestTableTableCreateCompanionBuilder,
+    $$TestTableTableUpdateCompanionBuilder,
+    (
+      TestTableData,
+      BaseReferences<_$TestDatabase, $TestTableTable, TestTableData>
+    ),
+    TestTableData,
+    PrefetchHooks Function()>;
 
-class $$TestTableTableFilterComposer
-    extends FilterComposer<_$TestDatabase, $TestTableTable> {
-  $$TestTableTableFilterComposer(super.$state);
-  ColumnFilters<int> get id => $state.composableBuilder(
-      column: $state.table.id,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<String> get content => $state.composableBuilder(
-      column: $state.table.content,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-}
-
-class $$TestTableTableOrderingComposer
-    extends OrderingComposer<_$TestDatabase, $TestTableTable> {
-  $$TestTableTableOrderingComposer(super.$state);
-  ColumnOrderings<int> get id => $state.composableBuilder(
-      column: $state.table.id,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<String> get content => $state.composableBuilder(
-      column: $state.table.content,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-}
-
-class _$TestDatabaseManager {
+class $TestDatabaseManager {
   final _$TestDatabase _db;
-  _$TestDatabaseManager(this._db);
+  $TestDatabaseManager(this._db);
   $$TestTableTableTableManager get testTable =>
       $$TestTableTableTableManager(_db, _db.testTable);
 }

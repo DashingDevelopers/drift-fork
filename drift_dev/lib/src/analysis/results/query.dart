@@ -76,6 +76,8 @@ class DefinedSqlQuery extends DriftElement implements DriftQueryDeclaration {
   /// `CAST(x AS ENUMNAME(MyDartType))` expression.
   final Map<String, DartType> dartTypes;
 
+  SqlQuery? resolved;
+
   DefinedSqlQuery(
     super.id,
     super.declaration, {
@@ -371,18 +373,18 @@ class CapturedVariable {
   ///
   /// This variable is not mounted to the same syntax tree as [reference], it
   /// will be mounted into the tree returned by [addHelperNodes].
-  final ColonNamedVariable introducedVariable;
+  final NamedVariable introducedVariable;
 
   String get helperColumn => '\$n_$queryGlobalId';
 
   CapturedVariable(this.reference, this.queryGlobalId)
-      : introducedVariable = ColonNamedVariable.synthetic(':r$queryGlobalId') {
+      : introducedVariable = NamedVariable.synthetic(':', 'r$queryGlobalId') {
     introducedVariable.setMeta<CapturedVariable>(this);
   }
 }
 
 class WrittenDriftTable {
-  final DriftTable table;
+  final DriftElementWithResultSet table;
   final UpdateKind kind;
 
   WrittenDriftTable(this.table, this.kind);

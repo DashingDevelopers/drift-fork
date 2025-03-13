@@ -2,11 +2,11 @@ import 'dart:convert';
 
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
+import 'package:build/build.dart' as build;
+import 'package:build/build.dart';
 import 'package:drift_dev/src/analysis/driver/state.dart';
 import 'package:drift_dev/src/analysis/results/element.dart';
 import 'package:logging/logging.dart';
-import 'package:build/build.dart';
-import 'package:build/build.dart' as build;
 
 import '../../analysis/backend.dart';
 import '../../analysis/driver/driver.dart';
@@ -68,7 +68,10 @@ class DriftBuildBackend extends DriftBackend {
 
   @override
   Future<Expression> resolveExpression(
-      Uri context, String dartExpression, Iterable<String> imports) async {
+    Uri context,
+    String dartExpression,
+    Iterable<String> imports,
+  ) async {
     final original = AssetId.resolve(context);
     final tempDart = original.changeExtension('.expr.temp.dart');
     final prepJson = original.changeExtension('.drift_prep.json');
@@ -110,8 +113,7 @@ class DriftBuildBackend extends DriftBackend {
 
     if (await _buildStep.canRead(tempDart)) {
       final library = await _buildStep.resolver.libraryFor(tempDart);
-
-      return library.scope.lookup(reference).getter;
+      return library.definingCompilationUnit.scope.lookup(reference).getter;
     } else {
       // If there's no temporary file whose imports we can use, then that means
       // that there aren't any Dart imports in [context] at all. So we just need

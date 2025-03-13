@@ -1,9 +1,11 @@
 /// An sql parser and analyzer for Dart.
-library sqlparser;
+library;
 
 export 'src/analysis/analysis.dart';
+export 'src/analysis/types/types.dart';
 export 'src/analysis/types/join_analysis.dart';
 export 'src/ast/ast.dart';
+export 'src/engine/module/dbstat.dart' show DbStatExtension;
 export 'src/engine/module/fts5.dart' show Fts5Extension, Fts5Table;
 export 'src/engine/module/geopoly.dart' show GeopolyExtension;
 export 'src/engine/module/json1.dart' show Json1Extension;

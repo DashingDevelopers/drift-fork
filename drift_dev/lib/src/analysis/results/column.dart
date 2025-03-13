@@ -1,6 +1,8 @@
 import 'package:analyzer/dart/element/type.dart';
+import 'package:drift/drift.dart' show SqlDialect;
 import 'package:json_annotation/json_annotation.dart';
-import 'package:sqlparser/sqlparser.dart' show GeneratedAs, ReferenceAction;
+import 'package:sqlparser/sqlparser.dart'
+    show Default, GeneratedAs, ReferenceAction;
 import 'package:sqlparser/utils/node_to_text.dart';
 
 import '../../utils/string_escaper.dart';
@@ -130,6 +132,15 @@ class DriftColumn implements HasType {
   String toString() {
     return 'Column $nameInSql in $owner';
   }
+
+  static AnnotatedDartCode defaultFromParser(Default constraint) {
+    return AnnotatedDartCode.build((b) => b
+      ..addText('const ')
+      ..addSymbol('CustomExpression', AnnotatedDartCode.drift)
+      ..addText('(')
+      ..addText(asDartLiteral(constraint.expression.toSql()))
+      ..addText(')'));
+  }
 }
 
 class CustomColumnType {
@@ -163,6 +174,9 @@ class AppliedTypeConverter {
   ///
   /// In other words, [sqlType] is potentially nullable.
   final bool sqlTypeIsNullable;
+
+  /// Whether the [jsonType] of this converter is nullable.
+  final bool jsonTypeIsNullable;
 
   /// Whether this converter is one of the enum type converters built into
   /// drift.
@@ -210,6 +224,7 @@ class AppliedTypeConverter {
     required this.sqlType,
     required this.dartTypeIsNullable,
     required this.sqlTypeIsNullable,
+    required this.jsonTypeIsNullable,
     required this.jsonType,
     required this.isDriftEnumTypeConverter,
   });
@@ -240,14 +255,20 @@ class ForeignKeyReference extends DriftColumnConstraint {
   final ReferenceAction? onUpdate;
   final ReferenceAction? onDelete;
 
-  ForeignKeyReference(this.otherColumn, this.onUpdate, this.onDelete);
+  /// Whether this foreign key reference was marked as deferrable and initially
+  /// deferred, meaning that it is only checked at the end of transactions.
+  final bool initiallyDeferred;
 
-  ForeignKeyReference.unresolved(this.onUpdate, this.onDelete);
+  ForeignKeyReference(
+      this.otherColumn, this.onUpdate, this.onDelete, this.initiallyDeferred);
+
+  ForeignKeyReference.unresolved(
+      this.onUpdate, this.onDelete, this.initiallyDeferred);
 
   @override
   String toString() {
     return 'ForeignKeyReference(to $otherColumn, onUpdate = $onUpdate, '
-        'onDelete = $onDelete)';
+        'onDelete = $onDelete, initially deferred = $initiallyDeferred)';
   }
 }
 
@@ -314,7 +335,11 @@ class LimitingTextLength extends DriftColumnConstraint {
 }
 
 class DefaultConstraintsFromSchemaFile extends DriftColumnConstraint {
-  final String constraints;
+  final String? forAllDialects;
+  final Map<SqlDialect, String> dialectSpecific;
 
-  DefaultConstraintsFromSchemaFile(this.constraints);
+  DefaultConstraintsFromSchemaFile(
+    this.forAllDialects, {
+    this.dialectSpecific = const {},
+  });
 }

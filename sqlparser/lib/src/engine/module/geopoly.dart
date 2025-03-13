@@ -1,8 +1,4 @@
-import 'package:sqlparser/src/analysis/analysis.dart';
-import 'package:sqlparser/src/ast/ast.dart';
-import 'package:sqlparser/src/engine/module/module.dart';
-import 'package:sqlparser/src/engine/sql_engine.dart';
-import 'package:sqlparser/src/reader/tokenizer/token.dart';
+import 'package:sqlparser/sqlparser.dart';
 
 final class GeopolyExtension implements Extension {
   const GeopolyExtension();
@@ -103,7 +99,7 @@ final class _GeopolyFunctionHandler extends FunctionHandler {
 
   @override
   ResolveResult inferArgumentType(
-    AnalysisContext context,
+    TypeInferenceSession session,
     SqlInvocation call,
     Expression argument,
   ) {
@@ -133,7 +129,7 @@ final class _GeopolyFunctionHandler extends FunctionHandler {
 
   @override
   ResolveResult inferReturnType(
-    AnalysisContext context,
+    TypeInferenceSession session,
     SqlInvocation call,
     List<Typeable> expandedArgs,
   ) {

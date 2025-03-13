@@ -1,9 +1,4 @@
-import 'package:sqlparser/src/analysis/analysis.dart';
-import 'package:sqlparser/src/ast/ast.dart';
-import 'package:sqlparser/src/engine/options.dart';
-import 'package:sqlparser/src/engine/sql_engine.dart';
-
-import 'module.dart';
+import 'package:sqlparser/sqlparser.dart';
 
 /// A math extension providing functions built into sqlite.
 ///
@@ -73,13 +68,13 @@ class _MathFunctions extends FunctionHandler {
 
   @override
   ResolveResult inferArgumentType(
-      AnalysisContext context, SqlInvocation call, Expression argument) {
+      TypeInferenceSession session, SqlInvocation call, Expression argument) {
     return const ResolveResult(ResolvedType(type: BasicType.real));
   }
 
   @override
-  ResolveResult inferReturnType(AnalysisContext context, SqlInvocation call,
-      List<Typeable> expandedArgs) {
+  ResolveResult inferReturnType(TypeInferenceSession session,
+      SqlInvocation call, List<Typeable> expandedArgs) {
     if (_unaryToInt.contains(call.name.toLowerCase())) {
       return const ResolveResult(ResolvedType(type: BasicType.int));
     }

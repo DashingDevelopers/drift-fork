@@ -506,9 +506,9 @@ class EqualityEnforcingVisitor implements AstVisitor<void, void> {
   }
 
   @override
-  void visitNamedVariable(ColonNamedVariable e, void arg) {
-    final current = _currentAs<ColonNamedVariable>(e);
-    _assert(current.name == e.name, e);
+  void visitNamedVariable(NamedVariable e, void arg) {
+    final current = _currentAs<NamedVariable>(e);
+    _assert(current.fullName == e.fullName, e);
     _checkChildren(e);
   }
 
@@ -798,7 +798,7 @@ class EqualityEnforcingVisitor implements AstVisitor<void, void> {
     if (otherChildren.moveNext()) {
       // Other has more elements than current
       throw NotEqualException(
-          "$_current and $other don't have an equal amount of children");
+          "$_current and $other don't have an equal amount of children (${_current.childNodes.length} and ${other.childNodes.length})");
     }
   }
 

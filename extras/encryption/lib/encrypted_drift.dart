@@ -1,6 +1,6 @@
 /// Encryption support for drift, built with the [sqflite_sqlcipher](https://github.com/davidmartos96/sqflite_sqlcipher)
 /// library.
-library encrypted_drift;
+library;
 
 // this file should be kept in sync with drift_sqflite/lib/drift_sqflite.dart
 

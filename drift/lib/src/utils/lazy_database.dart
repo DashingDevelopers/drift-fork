@@ -33,9 +33,19 @@ class LazyDatabase extends QueryExecutor {
 
   /// Declares a [LazyDatabase] that will run [opener] when the database is
   /// first requested to be opened. You must specify the same [dialect] as the
-  /// underlying database has
-  LazyDatabase(this.opener, {SqlDialect dialect = SqlDialect.sqlite})
-      : _dialect = dialect;
+  /// underlying database has.
+  ///
+  /// If [openImmediately] is true (it's false by default), the database calls
+  /// [opener] immediately. This can be useful when [opener] captures an
+  /// existing future or other state, as [close] would otherwise not clean up
+  /// if the database has never been used.
+  LazyDatabase(this.opener,
+      {SqlDialect dialect = SqlDialect.sqlite, bool openImmediately = false})
+      : _dialect = dialect {
+    if (openImmediately) {
+      unawaited(_awaitOpened());
+    }
+  }
 
   Future<void> _awaitOpened() {
     if (_delegateAvailable) {
@@ -52,6 +62,9 @@ class LazyDatabase extends QueryExecutor {
       return delegate.future;
     }
   }
+
+  @override
+  QueryExecutor beginExclusive() => _delegate.beginExclusive();
 
   @override
   TransactionExecutor beginTransaction() => _delegate.beginTransaction();
@@ -88,11 +101,14 @@ class LazyDatabase extends QueryExecutor {
       _delegate.runUpdate(statement, args);
 
   @override
-  Future<void> close() {
+  Future<void> close() async {
     if (_delegateAvailable) {
-      return _delegate.close();
+      return await _delegate.close();
+    } else if (_openDelegate case final completer?) {
+      await completer.future;
+      await _delegate.close();
     } else {
-      return Future.value();
+      // We never started opening the database, nothing to do.
     }
   }
 }

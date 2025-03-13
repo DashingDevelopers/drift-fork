@@ -6,7 +6,6 @@ import 'package:sqlparser/sqlparser.dart' hide PrimaryKeyColumn, UniqueColumn;
 import 'package:sqlparser/sqlparser.dart' as sql;
 import 'package:sqlparser/utils/node_to_text.dart';
 
-import '../../../utils/string_escaper.dart';
 import '../../driver/error.dart';
 import '../../driver/state.dart';
 import '../../results/results.dart';
@@ -139,6 +138,8 @@ class DriftTableResolver extends DriftElementResolver<DiscoveredDriftTable> {
                   targetColumn,
                   constraint.clause.onUpdate,
                   constraint.clause.onDelete,
+                  constraint.clause.effectiveDeferrableMode ==
+                      InitialDeferrableMode.deferred,
                 ));
               }
             }
@@ -146,12 +147,7 @@ class DriftTableResolver extends DriftElementResolver<DiscoveredDriftTable> {
         } else if (constraint is GeneratedAs) {
           constraints.add(ColumnGeneratedAs.fromParser(constraint));
         } else if (constraint is Default) {
-          defaultArgument = AnnotatedDartCode.build((b) => b
-            ..addText('const ')
-            ..addSymbol('CustomExpression', AnnotatedDartCode.drift)
-            ..addText('(')
-            ..addText(asDartLiteral(constraint.expression.toSql()))
-            ..addText(')'));
+          defaultArgument = DriftColumn.defaultFromParser(constraint);
         } else if (constraint is sql.PrimaryKeyColumn) {
           constraints.add(PrimaryKeyColumn(constraint.autoIncrement));
         } else if (constraint is sql.UniqueColumn) {
@@ -219,6 +215,8 @@ class DriftTableResolver extends DriftElementResolver<DiscoveredDriftTable> {
               otherColumns: foreignColumns,
               onUpdate: constraint.clause.onUpdate,
               onDelete: constraint.clause.onDelete,
+              initiallyDeferred: constraint.clause.effectiveDeferrableMode ==
+                  InitialDeferrableMode.deferred,
             ));
           }
         } else if (constraint is KeyClause) {
@@ -362,7 +360,7 @@ extension on ColumnDefinition {
     final tokens = <CommentToken>[];
 
     while (lastBefore is CommentToken) {
-      tokens.add(lastBefore);
+      tokens.insert(0, lastBefore);
       lastBefore = lastBefore.previous;
     }
 

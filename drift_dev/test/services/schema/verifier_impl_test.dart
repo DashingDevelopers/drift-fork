@@ -1,7 +1,7 @@
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
-import 'package:drift_dev/api/migrations.dart';
-import 'package:drift_dev/src/services/schema/verifier_impl.dart';
+import 'package:drift_dev/api/migrations_native.dart';
+import 'package:drift_dev/src/services/schema/verifier_common.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -64,9 +64,13 @@ void main() {
       await db.customStatement('CREATE TRIGGER x4 AFTER INSERT ON x1 BEGIN '
           'DELETE FROM x1;'
           'END;');
+      await db
+          .customStatement('CREATE TRIGGER x5 INSTEAD OF INSERT ON x2 BEGIN '
+              'DELETE FROM x1;'
+              'END;');
 
       final inputs = await db.collectSchemaInput(const []);
-      expect(inputs.map((e) => e.name), ['x1', 'x2', 'x3', 'x4']);
+      expect(inputs.map((e) => e.name), ['x1', 'x2', 'x3', 'x4', 'x5']);
     });
 
     test('does not contain shadow tables', () async {

@@ -5,7 +5,7 @@ class Fts5Extension implements Extension {
 
   @override
   void register(SqlEngine engine) {
-    engine.registerModule(_Fts5Module());
+    engine.registerModule(_Fts5Module(engine.options.version));
     engine.registerModule(_Fts5VocabModule());
     engine.registerFunctionHandler(const _Fts5Functions());
   }
@@ -16,7 +16,15 @@ class _Fts5Module extends Module {
   static final RegExp _option = RegExp(r'^(.+)\s*=\s*(.+)$');
   static final RegExp _cleanTicks = RegExp('[\'"]');
 
-  _Fts5Module() : super('fts5');
+  final SqliteVersion _version;
+
+  _Fts5Module(this._version) : super('fts5');
+
+  /// Whether fts5 columns should be assumed to be nullable.
+  ///
+  /// They are nullable, but for backwards compatibility we only enable this
+  /// after the user opts into analysis with sqlite 3.48.
+  bool get assumeNullableColumns => _version >= SqliteVersion.v3_48;
 
   @override
   Table parseTable(CreateVirtualTableStatement stmt) {
@@ -49,7 +57,13 @@ class _Fts5Module extends Module {
       contentRowId: (contentTable != null) ? contentRowId : null,
       columns: [
         for (var arg in columnNames)
-          TableColumn(arg, const ResolvedType(type: BasicType.text)),
+          TableColumn(
+            arg,
+            ResolvedType(
+              type: BasicType.text,
+              nullable: assumeNullableColumns,
+            ),
+          ),
       ],
       definition: stmt,
     );
@@ -139,7 +153,7 @@ class _Fts5Functions with ArgumentCountLinter implements FunctionHandler {
 
   @override
   ResolveResult inferArgumentType(
-      AnalysisContext context, SqlInvocation call, Expression argument) {
+      TypeInferenceSession session, SqlInvocation call, Expression argument) {
     int? argumentIndex;
     if (call.parameters is ExprFunctionParameters) {
       argumentIndex = (call.parameters as ExprFunctionParameters)
@@ -153,8 +167,13 @@ class _Fts5Functions with ArgumentCountLinter implements FunctionHandler {
 
     switch (call.name) {
       case 'bm25':
-        // bm25(fts_table)
-        return const ResolveResult.unknown();
+        // bm25(fts_table, weights...)
+        if (argumentIndex == 0) {
+          return const ResolveResult.unknown();
+        } else {
+          return const ResolveResult(ResolvedType(type: BasicType.real));
+        }
+
       case 'highlight':
         // highlight(fts_table, column_index, text_before, text_after)
         if (argumentIndex == 1) {
@@ -177,15 +196,19 @@ class _Fts5Functions with ArgumentCountLinter implements FunctionHandler {
   }
 
   @override
-  ResolveResult inferReturnType(AnalysisContext context, SqlInvocation call,
-      List<Typeable> expandedArgs) {
-    switch (call.name) {
+  ResolveResult inferReturnType(TypeInferenceSession session,
+      SqlInvocation call, List<Typeable> expandedArgs) {
+    switch (call.name.toLowerCase()) {
       case 'bm25':
         return const ResolveResult(ResolvedType(type: BasicType.real));
       case 'highlight':
-        return const ResolveResult(ResolvedType(type: BasicType.text));
       case 'snippet':
-        return const ResolveResult(ResolvedType(type: BasicType.text));
+        if (call is ExpressionInvocation) {
+          session.graph.addRelation(NullableIfSomeOtherIs(call, expandedArgs));
+        }
+
+        return const ResolveResult(
+            ResolvedType(type: BasicType.text, nullable: true));
     }
     return const ResolveResult.unknown();
   }
@@ -193,7 +216,6 @@ class _Fts5Functions with ArgumentCountLinter implements FunctionHandler {
   @override
   int? argumentCountFor(String function) {
     return const {
-      'bm25': 1,
       'highlight': 4,
       'snippet': 6,
     }[function];
@@ -212,9 +234,10 @@ class _Fts5Functions with ArgumentCountLinter implements FunctionHandler {
     }
 
     final args = (call.parameters as ExprFunctionParameters).parameters;
-    final expectedArgCount = argumentCountFor(call.name.toLowerCase());
+    final calledFunction = call.name.toLowerCase();
+    final expectedArgCount = argumentCountFor(calledFunction);
 
-    if (expectedArgCount != args.length) {
+    if (expectedArgCount != null && expectedArgCount != args.length) {
       reportArgumentCountMismatch(call, context, expectedArgCount, args.length);
       return;
     }
@@ -231,6 +254,20 @@ class _Fts5Functions with ArgumentCountLinter implements FunctionHandler {
         message: 'Expected an fts5 table name here',
         type: AnalysisErrorType.other,
       ));
+    } else if (calledFunction == 'bm25') {
+      // The bm25 function can use (table, weights...) parameters, but there
+      // shouldn't be more weights than columns.
+      final source = firstResolved.source as _Fts5TableColumn;
+      if (source.table case final table?) {
+        if (args.length > table.resultColumns.length + 1) {
+          context.reportError(AnalysisError(
+            relevantNode: call,
+            message: 'Superfluous weight columns (there are only '
+                '${table.resultColumns.length} columns on the table).',
+            type: AnalysisErrorType.other,
+          ));
+        }
+      }
     }
   }
 }

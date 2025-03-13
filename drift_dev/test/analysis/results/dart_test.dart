@@ -8,7 +8,13 @@ import '../test_utils.dart';
 void main() {
   late TestBackend tester;
 
-  setUpAll(() async => tester = await TestBackend.init({}));
+  setUpAll(() async => tester = await TestBackend.init({
+        'a|lib/definitions.dart': '''
+extension MyStringUtils on String {
+  String reverse() => throw 'todo';
+}
+''',
+      }));
   tearDownAll(() => tester.dispose());
 
   group('from AST', () {
@@ -18,7 +24,10 @@ void main() {
         String expectedResult, Map<String, String> expectedImports) async {
       final testUri = Uri.parse('package:a/test_${testCount++}.dart');
       final expression =
-          await tester.resolveExpression(testUri, sourceExpression, const []);
+          await tester.resolveExpression(testUri, sourceExpression, const [
+        'package:a/definitions.dart',
+        'package:drift/drift.dart',
+      ]);
       final annotated = AnnotatedDartCode.ast(expression);
 
       final imports = TestImportManager();
@@ -52,6 +61,31 @@ void main() {
           'IterableExtensions<String>([]).firstOrNull',
           'i0.IterableExtensions<i1.String>([]).firstOrNull',
           {'i0': 'dart:collection', 'i1': 'dart:core'});
+    });
+
+    test('extension method invocations', () async {
+      await checkTransformation(
+        "'hello world'.reverse()",
+        "i0.MyStringUtils('hello world').reverse()",
+        {'i0': 'package:a/definitions.dart'},
+      );
+
+      await checkTransformation(
+        "'hello world'?.reverse<void>(1, 2, 3)",
+        "i0.MyStringUtils('hello world')?.reverse<void>(1,2,3)",
+        {'i0': 'package:a/definitions.dart'},
+      );
+    });
+
+    test('explicit type arguments on extension', () async {
+      await checkTransformation(
+        "CustomExpression<DateTime>('creation_time')",
+        "i0.CustomExpression<i1.DateTime>('creation_time')",
+        {
+          'i0': 'package:drift/src/runtime/query_builder/query_builder.dart',
+          'i1': 'dart:core',
+        },
+      );
     });
   });
 }

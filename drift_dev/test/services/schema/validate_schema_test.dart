@@ -1,9 +1,8 @@
-@TestOn('vm')
 import 'dart:async';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
-import 'package:drift_dev/api/migrations.dart';
+import 'package:drift_dev/api/migrations_native.dart';
 import 'package:test/test.dart';
 
 class _TestTable extends Table with TableInfo<Table, Never> {

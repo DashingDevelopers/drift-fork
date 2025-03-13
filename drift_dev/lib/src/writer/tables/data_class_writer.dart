@@ -30,7 +30,7 @@ class DataClassWriter {
       final nullable = converter.canBeSkippedForNulls && column.nullable;
       final code = AnnotatedDartCode([
         ...AnnotatedDartCode.type(converter.jsonType!).elements,
-        if (nullable) '?',
+        if (nullable && !converter.jsonTypeIsNullable) const DartLexeme('?'),
       ]);
 
       return _emitter.dartCode(code);
@@ -51,19 +51,32 @@ class DataClassWriter {
         : _emitter.drift('DataClass');
     _buffer.write('class ${table.nameOfRowClass} extends $parentClass ');
 
+    var hasImplementsClause = false;
     if (isInsertable) {
       if (scope.options.writeToColumnsMixins) {
-        _buffer.writeln('with ${table.toColumnsMixin} {');
+        _buffer.writeln('with ${table.toColumnsMixin} ');
       } else {
         // The data class is only an insertable if we can actually insert rows
         // into the target entity.
         final type = _emitter.dartCode(_emitter.writer.rowType(table));
 
-        _buffer.writeln('implements ${_emitter.drift('Insertable')}<$type> {');
+        hasImplementsClause = true;
+        _buffer.writeln('implements ${_emitter.drift('Insertable')}<$type> ');
       }
-    } else {
-      _buffer.writeln('{');
     }
+
+    if (table.interfacesForRowClass.isNotEmpty) {
+      if (!hasImplementsClause) {
+        _buffer.write(' implements ');
+      } else {
+        _buffer.write(', ');
+      }
+
+      _buffer
+          .write(table.interfacesForRowClass.map(_emitter.dartCode).join(', '));
+    }
+
+    _buffer.writeln('{'); // start of clas
 
     // write individual fields
     for (final column in columns) {
@@ -82,6 +95,7 @@ class DataClassWriter {
         customParent?.isConst != false) {
       _buffer.write('const ');
     }
+    final allRequired = scope.options.rowClassConstructorAllRequired;
     _emitter
       ..write(table.nameOfRowClass)
       ..write('({')
@@ -90,7 +104,7 @@ class DataClassWriter {
             ? column.typeConverter!.mapsToNullableDart(column.nullable)
             : column.nullable;
 
-        if (nullableDartType) {
+        if (nullableDartType && !allRequired) {
           return 'this.${column.nameInDart}';
         } else {
           return 'required this.${column.nameInDart}';
@@ -114,8 +128,13 @@ class DataClassWriter {
     _writeFromJson();
     _writeToJson();
 
-    // And a convenience method to copy data from this class.
+    // And convenience methods to copy data from this class.
     _writeCopyWith();
+    if (isInsertable &&
+        scope.generationOptions.writeCompanions &&
+        !columns.any((column) => column.isGenerated)) {
+      _writeCopyWithCompanion();
+    }
 
     _writeToString();
     _writeHashCode();
@@ -151,7 +170,9 @@ class DataClassWriter {
       if (typeConverter != null && typeConverter.alsoAppliesToJsonConversion) {
         var type =
             _emitter.dartCode(AnnotatedDartCode.type(typeConverter.jsonType!));
-        if (column.nullable && typeConverter.canBeSkippedForNulls) {
+        if (column.nullable &&
+            typeConverter.canBeSkippedForNulls &&
+            !typeConverter.jsonTypeIsNullable) {
           type = '$type?';
         }
 
@@ -254,6 +275,29 @@ class DataClassWriter {
     }
 
     _buffer.write(');');
+  }
+
+  void _writeCopyWithCompanion() {
+    final asTable = table as DriftTable;
+    final companionType = _emitter.writer.companionType(asTable);
+
+    _emitter
+      ..write('${table.nameOfRowClass} copyWithCompanion(')
+      ..writeDart(companionType)
+      ..writeln(' data) {')
+      ..writeln('return ${table.nameOfRowClass}(');
+
+    for (final column in columns) {
+      // Generated columns do not appear in companions.
+      assert(!column.isGenerated);
+      final name = column.nameInDart;
+      _buffer
+          .write('$name: data.$name.present ? data.$name.value : this.$name,');
+    }
+
+    _buffer
+      ..writeln(');')
+      ..writeln('}');
   }
 
   void _writeToCompanion() {

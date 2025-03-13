@@ -151,7 +151,7 @@ class AstPreparingVisitor extends RecursiveVisitor<void, void> {
   }
 
   @override
-  void visitNamedVariable(ColonNamedVariable e, void arg) {
+  void visitNamedVariable(NamedVariable e, void arg) {
     _foundVariables.add(e);
     visitChildren(e, arg);
   }
@@ -177,11 +177,11 @@ class AstPreparingVisitor extends RecursiveVisitor<void, void> {
           variable.resolvedIndex = largestAssigned + 1;
           largestAssigned++;
         }
-      } else if (variable is ColonNamedVariable) {
+      } else if (variable is NamedVariable) {
         // named variables behave just like numbered vars without an explicit
         // index, but of course two variables with the same name must have the
         // same index.
-        final index = resolvedNames.putIfAbsent(variable.name, () {
+        final index = resolvedNames.putIfAbsent(variable.fullName, () {
           return ++largestAssigned;
         });
         variable.resolvedIndex = index;

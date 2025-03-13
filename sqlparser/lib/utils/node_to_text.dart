@@ -1,7 +1,7 @@
 /// Library to convert AST nodes back to text.
 ///
 /// See the [NodeToText] extension for details.
-library utils.node_to_text;
+library;
 
 import 'package:charcode/charcode.dart';
 import 'package:sqlparser/sqlparser.dart';
@@ -402,9 +402,6 @@ class NodeSqlBuilder extends AstVisitor<void, void> {
       case TriggerMode.insteadOf:
         keyword(TokenType.instead);
         keyword(TokenType.of);
-        break;
-      default:
-        // Can happen if e.mode == null
         break;
     }
 
@@ -909,9 +906,8 @@ class NodeSqlBuilder extends AstVisitor<void, void> {
   }
 
   @override
-  void visitNamedVariable(ColonNamedVariable e, void arg) {
-    // Note: The name already starts with the colon
-    symbol(e.name, spaceBefore: true, spaceAfter: true);
+  void visitNamedVariable(NamedVariable e, void arg) {
+    symbol(e.fullName, spaceBefore: true, spaceAfter: true);
   }
 
   @override

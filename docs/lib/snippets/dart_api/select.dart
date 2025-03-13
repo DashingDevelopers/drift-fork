@@ -203,4 +203,34 @@ extension SelectExamples on CanUseCommonTables {
     }).get();
   }
   // #enddocregion custom-columns
+
+  // #docregion hasTodoItem
+  Future<bool> hasTodoItem() async {
+    final todoItemExists = existsQuery(select(todoItems));
+    final row = await selectExpressions([todoItemExists]).getSingle();
+    return row.read(todoItemExists)!;
+  }
+  // #enddocregion hasTodoItem
+
+  // #docregion compound
+  Future<List<(String?, int)>> todoItemsInCategory() async {
+    final countWithCategory = subqueryExpression<int>(selectOnly(todoItems)
+      ..addColumns([countAll()])
+      ..where(todoItems.category.equalsExp(categories.id)));
+
+    final countWithoutCategory = subqueryExpression<int>(selectOnly(todoItems)
+      ..addColumns([countAll()])
+      ..where(todoItems.category.isNull()));
+
+    final query = db.selectOnly(categories)
+      ..addColumns([categories.name, countWithoutCategory])
+      ..groupBy([categories.id]);
+    query.unionAll(db.selectExpressions(
+        [const Constant<String>(null), countWithoutCategory]));
+
+    return query
+        .map((row) => (row.read(categories.name), row.read(countWithCategory)!))
+        .get();
+  }
+  // #enddocregion compound
 }

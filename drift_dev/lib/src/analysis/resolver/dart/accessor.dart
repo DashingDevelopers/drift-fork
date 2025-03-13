@@ -153,6 +153,8 @@ class DartAccessorResolver
         declaredQueries: queries,
         schemaVersion: await _readSchemaVersion(),
         accessors: accessors,
+        hasConstructorArgumentForConnection:
+            _hasConstructorWithDatabaseConnection(),
       );
     } else {
       final dbType = element.allSupertypes
@@ -208,5 +210,23 @@ class DartAccessorResolver
           .warning('Could not read schemaVersion from $element', e, s);
     }
     return null;
+  }
+
+  bool _hasConstructorWithDatabaseConnection() {
+    final constructor = discovered.dartElement.unnamedConstructor;
+    if (constructor == null) {
+      return false;
+    }
+    if (constructor.parameters.length != 1) {
+      return false;
+    }
+
+    final [param] = constructor.parameters;
+    if (param.isNamed) {
+      return false;
+    }
+
+    // Assume a matching type if a single-argument constructor is given.
+    return true;
   }
 }

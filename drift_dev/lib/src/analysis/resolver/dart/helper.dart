@@ -171,6 +171,15 @@ bool isColumn(DartType type) {
       !name.contains('Builder');
 }
 
+bool isColumnBuilder(DartType type) {
+  final name = type.nameIfInterfaceType;
+
+  return isFromDrift(type) &&
+      name != null &&
+      name.contains('Column') &&
+      name.contains('Builder');
+}
+
 bool isFromDrift(DartType type) {
   if (type is! InterfaceType) return false;
 
@@ -182,7 +191,7 @@ bool isFromDrift(DartType type) {
 
 extension IsFromDrift on Element {
   bool get isFromDefaultTable {
-    final parent = enclosingElement;
+    final parent = enclosingElement3;
 
     return parent is ClassElement &&
         parent.name == 'Table' &&
@@ -209,7 +218,6 @@ extension TypeUtils on DartType {
       // We can't actually use the legacy star in code, so don't show it.
       return getDisplayString();
     }
-
     return getDisplayString();
   }
 }
@@ -219,12 +227,14 @@ class DataClassInformation {
   final String? companionName;
   final CustomParentClass? extending;
   final ExistingRowClass? existingClass;
+  final List<AnnotatedDartCode> interfaces;
 
   DataClassInformation(
     this.enforcedName,
     this.companionName,
     this.extending,
     this.existingClass,
+    this.interfaces,
   );
 
   static Future<DataClassInformation> resolve(
@@ -254,14 +264,23 @@ class DataClassInformation {
     }
 
     var name = dataClassName?.getField('name')!.toStringValue();
-    final companionName =
-        dataClassName?.getField('companionName')?.toStringValue();
+    final companionName = dataClassName?.getField('companion')?.toStringValue();
     CustomParentClass? customParentClass;
     ExistingRowClass? existingClass;
+    List<AnnotatedDartCode> implementedInterfaces = const [];
 
     if (dataClassName != null) {
       customParentClass =
           parseCustomParentClass(name, dataClassName, element, resolver);
+
+      final interfaces = dataClassName
+          .getField('implementing')
+          ?.toListValue()
+          ?.map((field) => AnnotatedDartCode.type(field.toTypeValue()!))
+          .toList();
+      if (interfaces != null) {
+        implementedInterfaces = interfaces;
+      }
     }
 
     if (useRowClass != null) {
@@ -301,6 +320,7 @@ class DataClassInformation {
       companionName,
       customParentClass,
       existingClass,
+      implementedInterfaces,
     );
   }
 }

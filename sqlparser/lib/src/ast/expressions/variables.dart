@@ -27,15 +27,20 @@ class NumberedVariable extends Expression implements Variable {
   Iterable<AstNode> get childNodes => const [];
 }
 
-class ColonNamedVariable extends Expression implements Variable {
+class NamedVariable extends Expression implements Variable {
   final String name;
+
+  /// The [name] plus a variable prefix (e.g. `:user`)
+  final String fullName;
 
   @override
   int? resolvedIndex;
 
-  ColonNamedVariable.synthetic(this.name);
+  NamedVariable.synthetic(String prefix, this.name) : fullName = '$prefix$name';
 
-  ColonNamedVariable(ColonVariableToken token) : name = token.name;
+  NamedVariable(NamedVariableToken token)
+      : fullName = token.fullName,
+        name = token.name;
 
   @override
   R accept<A, R>(AstVisitor<A, R> visitor, A arg) {

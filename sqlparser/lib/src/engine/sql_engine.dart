@@ -1,7 +1,6 @@
 import 'dart:collection';
 
 import 'package:sqlparser/sqlparser.dart';
-import 'package:sqlparser/src/analysis/types/types.dart';
 import 'package:sqlparser/src/reader/parser.dart';
 import 'package:sqlparser/src/reader/tokenizer/scanner.dart';
 
@@ -111,38 +110,64 @@ class SqlEngine {
     return scope;
   }
 
+  Scanner _scan(String source) {
+    final scanner =
+        Scanner(source, scanDriftTokens: options.useDriftExtensions);
+    return scanner..scanTokens();
+  }
+
   /// Tokenizes the [source] into a list list [Token]s. Each [Token] contains
   /// information about where it appears in the [source] and a [TokenType].
+  ///
+  /// If an error occurs while tokenizing, e.g. because an invalid token is
+  /// found, throws a [CumulatedTokenizerException].
   ///
   /// Note that the list might be tokens that should be
   /// [Token.invisibleToParser], if you're passing them to a [Parser] directly,
   /// you need to filter them. When using the methods in this class, this will
   /// be taken care of automatically.
   List<Token> tokenize(String source) {
-    final scanner =
-        Scanner(source, scanDriftTokens: options.useDriftExtensions);
-    final tokens = scanner.scanTokens();
+    final scanner = _scan(source);
+    if (scanner.errors.isNotEmpty) {
+      throw CumulatedTokenizerException(scanner.errors);
+    }
 
-    return tokens;
+    return scanner.tokens;
   }
 
-  Parser _createParser(
-    List<Token> tokens, {
-    AutoCompleteEngine? autoComplete,
+  (List<Token>, Parser, AutoCompleteEngine?) _createParser(
+    String source, {
+    bool autoComplete = false,
     bool? driftExtensions,
   }) {
-    final tokensForParser = tokens.where((t) => !t.invisibleToParser).toList();
-    return Parser(
+    final tokenizer = _scan(source);
+    final allTokens = tokenizer.tokens;
+    final tokensForParser =
+        allTokens.where((t) => !t.invisibleToParser).toList();
+    final autoCompleteEngine =
+        autoComplete ? AutoCompleteEngine(allTokens, this) : null;
+
+    final parser = Parser(
       tokensForParser,
       useDrift: driftExtensions ?? options.useDriftExtensions,
-      autoComplete: autoComplete,
+      autoComplete: autoCompleteEngine,
     );
+
+    for (final error in tokenizer.errors) {
+      parser.errors.add(ParsingError(error, error.message));
+    }
+
+    return (allTokens, parser, autoCompleteEngine);
   }
 
   /// Parses a single [sql] statement into an AST-representation.
+  ///
+  /// This method generally doesn't throw, but instead collects parsing errors
+  /// through [ParseResult.errors]. Callers should check that value instead of
+  /// blindly trusting the returned AST, as it will be an approximation if
+  /// parsing errors were encountered.
   ParseResult parse(String sql) {
-    final tokens = tokenize(sql);
-    final parser = _createParser(tokens);
+    final (tokens, parser, _) = _createParser(sql);
 
     final stmt = parser.safeStatement();
     return ParseResult._(stmt, tokens, parser.errors, sql, null);
@@ -152,9 +177,13 @@ class SqlEngine {
   ///
   /// You can use the [AstNode.childNodes] of the returned [ParseResult.rootNode]
   /// to inspect the returned statements.
+  ///
+  /// This method generally doesn't throw, but instead collects parsing errors
+  /// through [ParseResult.errors]. Callers should check that value instead of
+  /// blindly trusting the returned AST, as it will be an approximation if
+  /// parsing errors were encountered.
   ParseResult parseMultiple(String sql) {
-    final tokens = tokenize(sql);
-    final parser = _createParser(tokens);
+    final (tokens, parser, _) = _createParser(sql);
 
     final ast = parser.safeStatements();
     return ParseResult._(ast, tokens, parser.errors, sql, null);
@@ -164,9 +193,13 @@ class SqlEngine {
   ///
   /// The [ParseResult.rootNode] will be a [ColumnDefinition] with the parsed
   /// constraints.
+  ///
+  /// This method generally doesn't throw, but instead collects parsing errors
+  /// through [ParseResult.errors]. Callers should check that value instead of
+  /// blindly trusting the returned AST, as it will be an approximation if
+  /// parsing errors were encountered.
   ParseResult parseColumnConstraints(String sql) {
-    final tokens = tokenize(sql);
-    final parser = _createParser(tokens, driftExtensions: false);
+    final (tokens, parser, _) = _createParser(sql, driftExtensions: false);
 
     return ParseResult._(
       ColumnDefinition(
@@ -185,9 +218,13 @@ class SqlEngine {
   ///
   /// The [ParseResult.rootNode] will either be a [TableConstraint] or an
   /// [InvalidStatement] in case of parsing errors.
+  ///
+  /// This method generally doesn't throw, but instead collects parsing errors
+  /// through [ParseResult.errors]. Callers should check that value instead of
+  /// blindly trusting the returned AST, as it will be an approximation if
+  /// parsing errors were encountered.
   ParseResult parseTableConstraint(String sql) {
-    final tokens = tokenize(sql);
-    final parser = _createParser(tokens, driftExtensions: false);
+    final (tokens, parser, _) = _createParser(sql, driftExtensions: false);
 
     AstNode? constraint;
     try {
@@ -209,10 +246,8 @@ class SqlEngine {
   /// additional components like import statements.
   ParseResult parseDriftFile(String content) {
     assert(options.useDriftExtensions);
-
-    final tokens = tokenize(content);
-    final autoComplete = AutoCompleteEngine(tokens, this);
-    final parser = _createParser(tokens, autoComplete: autoComplete);
+    final (tokens, parser, autoComplete) =
+        _createParser(content, autoComplete: true);
 
     final driftFile = parser.driftFile();
     driftFile.scope = _constructRootScope();
@@ -251,11 +286,7 @@ class SqlEngine {
   AnalysisContext analyzeParsed(ParseResult result,
       {AnalyzeStatementOptions? stmtOptions}) {
     final node = result.rootNode;
-
-    final context = _createContext(node, result.sql, stmtOptions);
-    _analyzeContext(context);
-
-    return context;
+    return analyzeNode(node, result.sql, stmtOptions: stmtOptions);
   }
 
   /// Analyzes the given [node], which should be a [CrudStatement].

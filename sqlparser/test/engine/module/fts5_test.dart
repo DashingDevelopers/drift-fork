@@ -3,7 +3,12 @@ import 'package:test/test.dart';
 
 import '../../analysis/data.dart';
 
-final _fts5Options = EngineOptions(enabledExtensions: const [Fts5Extension()]);
+final _fts5Options = EngineOptions(
+  version: SqliteVersion.current,
+  enabledExtensions: const [
+    Fts5Extension(),
+  ],
+);
 
 void main() {
   group('creating fts5 tables', () {
@@ -20,6 +25,7 @@ void main() {
       final columns = table.resultColumns;
       expect(columns, hasLength(1));
       expect(columns.single.name, 'bar');
+      expect(columns.single.type.nullable, isTrue);
       expect(
         table,
         isA<Fts5Table>()
@@ -167,6 +173,8 @@ void main() {
       final column = select.resolvedColumns!.singleWhere((c) => c.name == 'b');
       expect(result.typeOf(column),
           const ResolveResult(ResolvedType(type: BasicType.real)));
+      expect(result.typeOf((column as ExpressionColumn).expression),
+          const ResolveResult(ResolvedType(type: BasicType.real)));
     });
 
     test('return type of highlight()', () {
@@ -177,8 +185,10 @@ void main() {
 
       final select = result.root as SelectStatement;
       final column = select.resolvedColumns!.singleWhere((c) => c.name == 'b');
-      expect(result.typeOf(column),
-          const ResolveResult(ResolvedType(type: BasicType.text)));
+      expect(
+          result.typeOf(column),
+          const ResolveResult(
+              ResolvedType(type: BasicType.text, nullable: true)));
     });
 
     test('return type of snippet()', () {
@@ -189,8 +199,10 @@ void main() {
 
       final select = result.root as SelectStatement;
       final column = select.resolvedColumns!.singleWhere((c) => c.name == 'b');
-      expect(result.typeOf(column),
-          const ResolveResult(ResolvedType(type: BasicType.text)));
+      expect(
+          result.typeOf(column),
+          const ResolveResult(
+              ResolvedType(type: BasicType.text, nullable: true)));
     });
   });
 
@@ -240,6 +252,16 @@ void main() {
         ],
       );
     });
+
+    test('for bm25', () {
+      checkVarTypes(
+        'SELECT bm25(fts, ?, ?) FROM fts;',
+        [
+          BasicType.real,
+          BasicType.real,
+        ],
+      );
+    });
   });
 
   group('error reporting', () {
@@ -278,6 +300,19 @@ void main() {
         result.errors,
         [
           hasMessage(stringContainsInOrder(['highlight', '4', '2']))
+        ],
+      );
+    });
+
+    test('with too many weights in bm25', () {
+      final result =
+          engine.analyze('SELECT bm25(foo, 0.5, 0.6, 0.1) FROM foo;');
+
+      expect(
+        result.errors,
+        [
+          hasMessage(
+              'Superfluous weight columns (there are only 2 columns on the table).')
         ],
       );
     });

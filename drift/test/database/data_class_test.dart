@@ -39,7 +39,7 @@ void main() {
         id: RowId(13),
         title: 'Title',
         content: 'Content',
-        category: 3,
+        category: RowId(3),
         targetDate: DateTime.now(),
       );
       expect(
@@ -103,6 +103,24 @@ void main() {
     expect(entry.toCompanion(false),
         const PureDefaultsCompanion(txt: Value(null)));
     expect(entry.toCompanion(true), const PureDefaultsCompanion());
+  });
+
+  test('data classes can be copied with changes given by companion', () {
+    const nameless = DepartmentData(id: 1);
+    expect(nameless.copyWithCompanion(DepartmentCompanion()),
+        const DepartmentData(id: 1));
+    expect(nameless.copyWithCompanion(DepartmentCompanion(id: Value(2))),
+        const DepartmentData(id: 2));
+    expect(nameless.copyWithCompanion(DepartmentCompanion(name: Value("a"))),
+        const DepartmentData(id: 1, name: "a"));
+
+    const named = DepartmentData(id: 2, name: "b");
+    expect(named.copyWithCompanion(DepartmentCompanion()),
+        const DepartmentData(id: 2, name: "b"));
+    expect(named.copyWithCompanion(DepartmentCompanion(name: Value("c"))),
+        const DepartmentData(id: 2, name: "c"));
+    expect(named.copyWithCompanion(DepartmentCompanion(name: Value(null))),
+        const DepartmentData(id: 2));
   });
 
   test('utilities to wrap nullable values', () {

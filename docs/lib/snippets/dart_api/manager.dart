@@ -1,9 +1,10 @@
-// ignore_for_file: invalid_use_of_internal_member
+// ignore_for_file: invalid_use_of_internal_member, unused_local_variable, unused_element
 
 import 'package:drift/drift.dart';
 
 part 'manager.g.dart';
 
+// #docregion tables
 class TodoItems extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get title => text().withLength(min: 6, max: 32)();
@@ -16,10 +17,11 @@ class TodoItems extends Table {
 class TodoCategory extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get description => text()();
+  IntColumn get user => integer().nullable().references(Users, #id)();
 }
+// #enddocregion tables
 
 // #docregion user_group_tables
-
 class Users extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get name => text()();
@@ -130,7 +132,7 @@ extension ManagerExamples on AppDatabase {
   // #enddocregion manager_filter
 
   // #docregion manager_type_specific_filter
-  Future filterWithType() async {
+  Future<void> filterWithType() async {
     // Filter all items created since 7 days ago
     managers.todoItems.filter(
         (f) => f.createdAt.isAfter(DateTime.now().subtract(Duration(days: 7))));
@@ -141,7 +143,7 @@ extension ManagerExamples on AppDatabase {
 // #enddocregion manager_type_specific_filter
 
 // #docregion manager_ordering
-  Future orderWithType() async {
+  Future<void> orderWithType() async {
     // Order all items by their creation date in ascending order
     managers.todoItems.orderBy((o) => o.createdAt.asc());
 
@@ -151,7 +153,7 @@ extension ManagerExamples on AppDatabase {
 // #enddocregion manager_ordering
 
 // #docregion manager_count
-  Future count() async {
+  Future<void> count() async {
     // Count all items
     await managers.todoItems.count();
 
@@ -161,7 +163,7 @@ extension ManagerExamples on AppDatabase {
 // #enddocregion manager_count
 
 // #docregion manager_exists
-  Future exists() async {
+  Future<void> exists() async {
     // Check if any items exist
     await managers.todoItems.exists();
 
@@ -171,7 +173,7 @@ extension ManagerExamples on AppDatabase {
 // #enddocregion manager_exists
 
 // #docregion manager_filter_forward_references
-  Future relationalFilter() async {
+  Future<void> relationalFilter() async {
     // Get all items with a category description of "School"
     managers.todoItems.filter((f) => f.category.description("School"));
 
@@ -186,7 +188,7 @@ extension ManagerExamples on AppDatabase {
 // #enddocregion manager_filter_forward_references
 
 // #docregion manager_filter_back_references
-  Future reverseRelationalFilter() async {
+  Future<void> reverseRelationalFilter() async {
     // Get the category that has a todo item with an id of 1
     managers.todoCategory.filter((f) => f.todoItemsRefs((f) => f.id(1)));
 
@@ -199,7 +201,7 @@ extension ManagerExamples on AppDatabase {
 // #enddocregion manager_filter_back_references
 
 // #docregion manager_filter_custom_back_references
-  Future reverseNamedRelationalFilter() async {
+  Future<void> reverseNamedRelationalFilter() async {
     // Get all users who are administrators of a group with a name containing "Business"
     // or who own a group with an id of 1, 2, 4, or 5
     managers.users.filter(
@@ -209,6 +211,69 @@ extension ManagerExamples on AppDatabase {
     );
   }
 // #enddocregion manager_filter_custom_back_references
+
+// #docregion manager_references
+  Future<void> references() async {
+    /// Get each todo, along with a its categories
+    final todosWithRefs = await managers.todoItems.withReferences().get();
+    for (final (todo, refs) in todosWithRefs) {
+      final category = await refs.category?.getSingle();
+    }
+
+    /// This also works in the reverse
+    final categoriesWithRefs =
+        await managers.todoCategory.withReferences().get();
+    for (final (category, refs) in categoriesWithRefs) {
+      final todos = await refs.todoItemsRefs.get();
+    }
+  }
+
+// #enddocregion manager_references
+// #docregion manager_prefetch_references
+  Future<void> referencesPrefetch() async {
+    /// Get each todo, along with a its categories
+    final todosWithRefs = await managers.todoItems
+        .withReferences(
+          (prefetch) => prefetch(category: true),
+        )
+        .get();
+    for (final (todo, refs) in todosWithRefs) {
+      final category = refs.category?.prefetchedData?.firstOrNull;
+      // No longer needed
+      // final category = await refs.category?.getSingle();
+    }
+
+    /// This also works in the reverse
+    final categoriesWithRefs = await managers.todoCategory
+        .withReferences((prefetch) => prefetch(todoItemsRefs: true))
+        .get();
+    for (final (category, refs) in categoriesWithRefs) {
+      final todos = refs.todoItemsRefs.prefetchedData;
+      // No longer needed
+      //final todos = await refs.todoItemsRefs.get();
+    }
+  }
+// #enddocregion manager_prefetch_references
+
+  Future<void> referencesPrefetchStream() async {
+// #docregion manager_prefetch_references_stream
+    /// Get each todo, along with a its categories
+    managers.todoCategory
+        .withReferences((prefetch) => prefetch(todoItemsRefs: true, user: true))
+        .watch()
+        .listen(
+      (catWithRefs) {
+        for (final (cat, refs) in catWithRefs) {
+          // Updates to the user table will trigger a query
+          final users = refs.user?.prefetchedData;
+
+          // However, updates to the TodoItems table will not trigger a query
+          final todos = refs.todoItemsRefs.prefetchedData;
+        }
+      },
+    );
+// #enddocregion manager_prefetch_references_stream
+  }
 }
 
 // #docregion manager_filter_extensions
@@ -216,15 +281,15 @@ extension ManagerExamples on AppDatabase {
 // or by creating a new filter from scratch
 extension After2000Filter on ColumnFilters<DateTime> {
   // Create a new filter by combining existing filters
-  ComposableFilter after2000orBefore1900() =>
+  Expression<bool> after2000orBefore1900() =>
       isAfter(DateTime(2000)) | isBefore(DateTime(1900));
 
   // Create a new filter from scratch using the `column` property
-  ComposableFilter filterOnUnixEpoch(int value) =>
+  Expression<bool> filterOnUnixEpoch(int value) =>
       $composableFilter(column.unixepoch.equals(value));
 }
 
-Future filterWithExtension(AppDatabase db) async {
+Future<void> filterWithExtension(AppDatabase db) async {
   // Use the custom filters on any column that is of type DateTime
   db.managers.todoItems.filter((f) => f.createdAt.after2000orBefore1900());
 
@@ -239,7 +304,7 @@ extension After2000Ordering on ColumnOrderings<DateTime> {
   ComposableOrdering byUnixEpoch() => ColumnOrderings(column.unixepoch).asc();
 }
 
-Future orderingWithExtension(AppDatabase db) async {
+Future<void> orderingWithExtension(AppDatabase db) async {
   // Use the custom orderings on any column that is of type DateTime
   db.managers.todoItems.orderBy((f) => f.createdAt.byUnixEpoch());
 }
@@ -248,11 +313,11 @@ Future orderingWithExtension(AppDatabase db) async {
 // #docregion manager_custom_filter
 // Extend the generated table filter composer to add a custom filter
 extension NoContentOrBefore2000FilterX on $$TodoItemsTableFilterComposer {
-  ComposableFilter noContentOrBefore2000() =>
+  Expression<bool> noContentOrBefore2000() =>
       (content.isNull() | createdAt.isBefore(DateTime(2000)));
 }
 
-Future customFilter(AppDatabase db) async {
+Future<void> customFilter(AppDatabase db) async {
   // Use the custom filter on the `TodoItems` table
   db.managers.todoItems.filter((f) => f.noContentOrBefore2000());
 }
@@ -264,8 +329,68 @@ extension ContentThenCreationDataX on $$TodoItemsTableOrderingComposer {
   ComposableOrdering contentThenCreatedAt() => content.asc() & createdAt.asc();
 }
 
-Future customOrdering(AppDatabase db) async {
+Future<void> customOrdering(AppDatabase db) async {
   // Use the custom ordering on the `TodoItems` table
   db.managers.todoItems.orderBy((f) => f.contentThenCreatedAt());
 }
 // #enddocregion manager_custom_ordering
+
+void _managerAnnotations(AppDatabase db) async {
+  // #docregion manager_annotations
+  // First create an computed field with an expression you want to use
+  final titleLengthField =
+      db.managers.todoItems.computedField((o) => o.title.length);
+
+  /// Create a copy of the manager with the computed fields you want to use
+  final manager = db.managers.todoItems.withFields([titleLengthField]);
+
+  // Then use the computed field in a filter
+  // This will filter all items whose title has exactly 10 characters
+  manager.filter((f) => titleLengthField.filter(10));
+
+  // You can also use the computed field in an ordering
+  // This will order all items by the length of their title in ascending order
+  manager.orderBy((o) => titleLengthField.order.asc());
+
+  /// You can read the result of the computed field too
+  for (final (item, refs) in await manager.get()) {
+    final titleLength = titleLengthField.read(refs);
+    print('Item ${item.id} has a title length of $titleLength');
+  }
+// #enddocregion manager_annotations
+}
+
+void _managerReferencedAnnotations(AppDatabase db) async {
+  // #docregion referenced_annotations
+  // This computed field will get the name of the user of this todo
+  final todoUserName =
+      db.managers.todoItems.computedField((o) => o.category.user.name);
+
+  /// Create a copy of the manager with the computed fields you want to use
+  final manager = db.managers.todoItems.withFields([todoUserName]);
+
+  /// You can read the result of the computed field too
+  for (final (item, refs) in await manager.get()) {
+    final userName = todoUserName.read(refs);
+    print('Item ${item.id} has a user with the name $userName');
+  }
+  // #enddocregion referenced_annotations
+}
+
+void _managerAggregatedAnnotations(AppDatabase db) async {
+  // #docregion aggregated_annotations
+  // You can aggregate over multiple rows in a related table
+  // to perform calculations on them
+  final todoCountcomputedField = db.managers.todoCategory
+      .computedField((o) => o.todoItemsRefs((o) => o.id).count());
+
+  /// Create a copy of the manager with the computed fields you want to use
+  final manager = db.managers.todoCategory.withFields([todoCountcomputedField]);
+
+  /// Read the result of the computed field
+  for (final (category, refs) in await manager.get()) {
+    final todoCount = todoCountcomputedField.read(refs);
+    print('Category ${category.id} has $todoCount todos');
+  }
+  // #enddocregion aggregated_annotations
+}

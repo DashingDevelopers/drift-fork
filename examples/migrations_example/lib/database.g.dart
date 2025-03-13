@@ -29,7 +29,10 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
   @override
   late final GeneratedColumn<DateTime> birthday = GeneratedColumn<DateTime>(
       'birthday', aliasedName, true,
-      type: DriftSqlType.dateTime, requiredDuringInsert: false);
+      check: () =>
+          ComparableExpr(birthday).isBiggerThan(Constant(DateTime(1900))),
+      type: DriftSqlType.dateTime,
+      requiredDuringInsert: false);
   static const VerificationMeta _nextUserMeta =
       const VerificationMeta('nextUser');
   @override
@@ -162,6 +165,15 @@ class User extends DataClass implements Insertable<User> {
         birthday: birthday.present ? birthday.value : this.birthday,
         nextUser: nextUser.present ? nextUser.value : this.nextUser,
       );
+  User copyWithCompanion(UsersCompanion data) {
+    return User(
+      id: data.id.present ? data.id.value : this.id,
+      name: data.name.present ? data.name.value : this.name,
+      birthday: data.birthday.present ? data.birthday.value : this.birthday,
+      nextUser: data.nextUser.present ? data.nextUser.value : this.nextUser,
+    );
+  }
+
   @override
   String toString() {
     return (StringBuffer('User(')
@@ -417,6 +429,15 @@ class Group extends DataClass implements Insertable<Group> {
         deleted: deleted.present ? deleted.value : this.deleted,
         owner: owner ?? this.owner,
       );
+  Group copyWithCompanion(GroupsCompanion data) {
+    return Group(
+      id: data.id.present ? data.id.value : this.id,
+      title: data.title.present ? data.title.value : this.title,
+      deleted: data.deleted.present ? data.deleted.value : this.deleted,
+      owner: data.owner.present ? data.owner.value : this.owner,
+    );
+  }
+
   @override
   String toString() {
     return (StringBuffer('Group(')
@@ -650,6 +671,15 @@ class Note extends DataClass implements Insertable<Note> {
         content: content ?? this.content,
         searchTerms: searchTerms ?? this.searchTerms,
       );
+  Note copyWithCompanion(NotesCompanion data) {
+    return Note(
+      title: data.title.present ? data.title.value : this.title,
+      content: data.content.present ? data.content.value : this.content,
+      searchTerms:
+          data.searchTerms.present ? data.searchTerms.value : this.searchTerms,
+    );
+  }
+
   @override
   String toString() {
     return (StringBuffer('Note(')
@@ -884,7 +914,7 @@ class GroupCount extends ViewInfo<GroupCount, GroupCountData>
 
 abstract class _$Database extends GeneratedDatabase {
   _$Database(QueryExecutor e) : super(e);
-  _$DatabaseManager get managers => _$DatabaseManager(this);
+  $DatabaseManager get managers => $DatabaseManager(this);
   late final $UsersTable users = $UsersTable(this);
   late final Groups groups = Groups(this);
   late final Notes notes = Notes(this);
@@ -902,7 +932,7 @@ abstract class _$Database extends GeneratedDatabase {
       const DriftDatabaseOptions(storeDateTimeAsText: true);
 }
 
-typedef $$UsersTableInsertCompanionBuilder = UsersCompanion Function({
+typedef $$UsersTableCreateCompanionBuilder = UsersCompanion Function({
   Value<int> id,
   Value<String> name,
   Value<DateTime?> birthday,
@@ -915,25 +945,218 @@ typedef $$UsersTableUpdateCompanionBuilder = UsersCompanion Function({
   Value<int?> nextUser,
 });
 
+final class $$UsersTableReferences
+    extends BaseReferences<_$Database, $UsersTable, User> {
+  $$UsersTableReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static $UsersTable _nextUserTable(_$Database db) => db.users
+      .createAlias($_aliasNameGenerator(db.users.nextUser, db.users.id));
+
+  $$UsersTableProcessedTableManager? get nextUser {
+    final $_column = $_itemColumn<int>('next_user');
+    if ($_column == null) return null;
+    final manager = $$UsersTableTableManager($_db, $_db.users)
+        .filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_nextUserTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+        manager.$state.copyWith(prefetchedData: [item]));
+  }
+
+  static MultiTypedResultKey<Groups, List<Group>> _groupsRefsTable(
+          _$Database db) =>
+      MultiTypedResultKey.fromTable(db.groups,
+          aliasName: $_aliasNameGenerator(db.users.id, db.groups.owner));
+
+  $GroupsProcessedTableManager get groupsRefs {
+    final manager = $GroupsTableManager($_db, $_db.groups)
+        .filter((f) => f.owner.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_groupsRefsTable($_db));
+    return ProcessedTableManager(
+        manager.$state.copyWith(prefetchedData: cache));
+  }
+}
+
+class $$UsersTableFilterComposer extends Composer<_$Database, $UsersTable> {
+  $$UsersTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get name => $composableBuilder(
+      column: $table.name, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get birthday => $composableBuilder(
+      column: $table.birthday, builder: (column) => ColumnFilters(column));
+
+  $$UsersTableFilterComposer get nextUser {
+    final $$UsersTableFilterComposer composer = $composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.nextUser,
+        referencedTable: $db.users,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder,
+                {$addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer}) =>
+            $$UsersTableFilterComposer(
+              $db: $db,
+              $table: $db.users,
+              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+              joinBuilder: joinBuilder,
+              $removeJoinBuilderFromRootComposer:
+                  $removeJoinBuilderFromRootComposer,
+            ));
+    return composer;
+  }
+
+  Expression<bool> groupsRefs(
+      Expression<bool> Function($GroupsFilterComposer f) f) {
+    final $GroupsFilterComposer composer = $composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.id,
+        referencedTable: $db.groups,
+        getReferencedColumn: (t) => t.owner,
+        builder: (joinBuilder,
+                {$addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer}) =>
+            $GroupsFilterComposer(
+              $db: $db,
+              $table: $db.groups,
+              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+              joinBuilder: joinBuilder,
+              $removeJoinBuilderFromRootComposer:
+                  $removeJoinBuilderFromRootComposer,
+            ));
+    return f(composer);
+  }
+}
+
+class $$UsersTableOrderingComposer extends Composer<_$Database, $UsersTable> {
+  $$UsersTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get name => $composableBuilder(
+      column: $table.name, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get birthday => $composableBuilder(
+      column: $table.birthday, builder: (column) => ColumnOrderings(column));
+
+  $$UsersTableOrderingComposer get nextUser {
+    final $$UsersTableOrderingComposer composer = $composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.nextUser,
+        referencedTable: $db.users,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder,
+                {$addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer}) =>
+            $$UsersTableOrderingComposer(
+              $db: $db,
+              $table: $db.users,
+              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+              joinBuilder: joinBuilder,
+              $removeJoinBuilderFromRootComposer:
+                  $removeJoinBuilderFromRootComposer,
+            ));
+    return composer;
+  }
+}
+
+class $$UsersTableAnnotationComposer extends Composer<_$Database, $UsersTable> {
+  $$UsersTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get birthday =>
+      $composableBuilder(column: $table.birthday, builder: (column) => column);
+
+  $$UsersTableAnnotationComposer get nextUser {
+    final $$UsersTableAnnotationComposer composer = $composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.nextUser,
+        referencedTable: $db.users,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder,
+                {$addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer}) =>
+            $$UsersTableAnnotationComposer(
+              $db: $db,
+              $table: $db.users,
+              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+              joinBuilder: joinBuilder,
+              $removeJoinBuilderFromRootComposer:
+                  $removeJoinBuilderFromRootComposer,
+            ));
+    return composer;
+  }
+
+  Expression<T> groupsRefs<T extends Object>(
+      Expression<T> Function($GroupsAnnotationComposer a) f) {
+    final $GroupsAnnotationComposer composer = $composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.id,
+        referencedTable: $db.groups,
+        getReferencedColumn: (t) => t.owner,
+        builder: (joinBuilder,
+                {$addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer}) =>
+            $GroupsAnnotationComposer(
+              $db: $db,
+              $table: $db.groups,
+              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+              joinBuilder: joinBuilder,
+              $removeJoinBuilderFromRootComposer:
+                  $removeJoinBuilderFromRootComposer,
+            ));
+    return f(composer);
+  }
+}
+
 class $$UsersTableTableManager extends RootTableManager<
     _$Database,
     $UsersTable,
     User,
     $$UsersTableFilterComposer,
     $$UsersTableOrderingComposer,
-    $$UsersTableProcessedTableManager,
-    $$UsersTableInsertCompanionBuilder,
-    $$UsersTableUpdateCompanionBuilder> {
+    $$UsersTableAnnotationComposer,
+    $$UsersTableCreateCompanionBuilder,
+    $$UsersTableUpdateCompanionBuilder,
+    (User, $$UsersTableReferences),
+    User,
+    PrefetchHooks Function({bool nextUser, bool groupsRefs})> {
   $$UsersTableTableManager(_$Database db, $UsersTable table)
       : super(TableManagerState(
           db: db,
           table: table,
-          filteringComposer:
-              $$UsersTableFilterComposer(ComposerState(db, table)),
-          orderingComposer:
-              $$UsersTableOrderingComposer(ComposerState(db, table)),
-          getChildManagerBuilder: (p) => $$UsersTableProcessedTableManager(p),
-          getUpdateCompanionBuilder: ({
+          createFilteringComposer: () =>
+              $$UsersTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$UsersTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$UsersTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
             Value<int> id = const Value.absent(),
             Value<String> name = const Value.absent(),
             Value<DateTime?> birthday = const Value.absent(),
@@ -945,7 +1168,7 @@ class $$UsersTableTableManager extends RootTableManager<
             birthday: birthday,
             nextUser: nextUser,
           ),
-          getInsertCompanionBuilder: ({
+          createCompanionCallback: ({
             Value<int> id = const Value.absent(),
             Value<String> name = const Value.absent(),
             Value<DateTime?> birthday = const Value.absent(),
@@ -957,97 +1180,72 @@ class $$UsersTableTableManager extends RootTableManager<
             birthday: birthday,
             nextUser: nextUser,
           ),
+          withReferenceMapper: (p0) => p0
+              .map((e) =>
+                  (e.readTable(table), $$UsersTableReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: ({nextUser = false, groupsRefs = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [if (groupsRefs) db.groups],
+              addJoins: <
+                  T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic>>(state) {
+                if (nextUser) {
+                  state = state.withJoin(
+                    currentTable: table,
+                    currentColumn: table.nextUser,
+                    referencedTable: $$UsersTableReferences._nextUserTable(db),
+                    referencedColumn:
+                        $$UsersTableReferences._nextUserTable(db).id,
+                  ) as T;
+                }
+
+                return state;
+              },
+              getPrefetchedDataCallback: (items) async {
+                return [
+                  if (groupsRefs)
+                    await $_getPrefetchedData(
+                        currentTable: table,
+                        referencedTable:
+                            $$UsersTableReferences._groupsRefsTable(db),
+                        managerFromTypedResult: (p0) =>
+                            $$UsersTableReferences(db, table, p0).groupsRefs,
+                        referencedItemsForCurrentItem: (item,
+                                referencedItems) =>
+                            referencedItems.where((e) => e.owner == item.id),
+                        typedResults: items)
+                ];
+              },
+            );
+          },
         ));
 }
 
-class $$UsersTableProcessedTableManager extends ProcessedTableManager<
+typedef $$UsersTableProcessedTableManager = ProcessedTableManager<
     _$Database,
     $UsersTable,
     User,
     $$UsersTableFilterComposer,
     $$UsersTableOrderingComposer,
-    $$UsersTableProcessedTableManager,
-    $$UsersTableInsertCompanionBuilder,
-    $$UsersTableUpdateCompanionBuilder> {
-  $$UsersTableProcessedTableManager(super.$state);
-}
-
-class $$UsersTableFilterComposer
-    extends FilterComposer<_$Database, $UsersTable> {
-  $$UsersTableFilterComposer(super.$state);
-  ColumnFilters<int> get id => $state.composableBuilder(
-      column: $state.table.id,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<String> get name => $state.composableBuilder(
-      column: $state.table.name,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<DateTime> get birthday => $state.composableBuilder(
-      column: $state.table.birthday,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  $$UsersTableFilterComposer get nextUser {
-    final $$UsersTableFilterComposer composer = $state.composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.nextUser,
-        referencedTable: $state.db.users,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder, parentComposers) => $$UsersTableFilterComposer(
-            ComposerState(
-                $state.db, $state.db.users, joinBuilder, parentComposers)));
-    return composer;
-  }
-
-  ComposableFilter groupsRefs(
-      ComposableFilter Function($GroupsFilterComposer f) f) {
-    final $GroupsFilterComposer composer = $state.composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.id,
-        referencedTable: $state.db.groups,
-        getReferencedColumn: (t) => t.owner,
-        builder: (joinBuilder, parentComposers) => $GroupsFilterComposer(
-            ComposerState(
-                $state.db, $state.db.groups, joinBuilder, parentComposers)));
-    return f(composer);
-  }
-}
-
-class $$UsersTableOrderingComposer
-    extends OrderingComposer<_$Database, $UsersTable> {
-  $$UsersTableOrderingComposer(super.$state);
-  ColumnOrderings<int> get id => $state.composableBuilder(
-      column: $state.table.id,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<String> get name => $state.composableBuilder(
-      column: $state.table.name,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<DateTime> get birthday => $state.composableBuilder(
-      column: $state.table.birthday,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  $$UsersTableOrderingComposer get nextUser {
-    final $$UsersTableOrderingComposer composer = $state.composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.nextUser,
-        referencedTable: $state.db.users,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder, parentComposers) => $$UsersTableOrderingComposer(
-            ComposerState(
-                $state.db, $state.db.users, joinBuilder, parentComposers)));
-    return composer;
-  }
-}
-
-typedef $GroupsInsertCompanionBuilder = GroupsCompanion Function({
+    $$UsersTableAnnotationComposer,
+    $$UsersTableCreateCompanionBuilder,
+    $$UsersTableUpdateCompanionBuilder,
+    (User, $$UsersTableReferences),
+    User,
+    PrefetchHooks Function({bool nextUser, bool groupsRefs})>;
+typedef $GroupsCreateCompanionBuilder = GroupsCompanion Function({
   Value<int> id,
   required String title,
   Value<bool?> deleted,
@@ -1060,23 +1258,162 @@ typedef $GroupsUpdateCompanionBuilder = GroupsCompanion Function({
   Value<int> owner,
 });
 
+final class $GroupsReferences
+    extends BaseReferences<_$Database, Groups, Group> {
+  $GroupsReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static $UsersTable _ownerTable(_$Database db) =>
+      db.users.createAlias($_aliasNameGenerator(db.groups.owner, db.users.id));
+
+  $$UsersTableProcessedTableManager get owner {
+    final $_column = $_itemColumn<int>('owner')!;
+
+    final manager = $$UsersTableTableManager($_db, $_db.users)
+        .filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_ownerTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+        manager.$state.copyWith(prefetchedData: [item]));
+  }
+}
+
+class $GroupsFilterComposer extends Composer<_$Database, Groups> {
+  $GroupsFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get title => $composableBuilder(
+      column: $table.title, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get deleted => $composableBuilder(
+      column: $table.deleted, builder: (column) => ColumnFilters(column));
+
+  $$UsersTableFilterComposer get owner {
+    final $$UsersTableFilterComposer composer = $composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.owner,
+        referencedTable: $db.users,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder,
+                {$addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer}) =>
+            $$UsersTableFilterComposer(
+              $db: $db,
+              $table: $db.users,
+              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+              joinBuilder: joinBuilder,
+              $removeJoinBuilderFromRootComposer:
+                  $removeJoinBuilderFromRootComposer,
+            ));
+    return composer;
+  }
+}
+
+class $GroupsOrderingComposer extends Composer<_$Database, Groups> {
+  $GroupsOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get title => $composableBuilder(
+      column: $table.title, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get deleted => $composableBuilder(
+      column: $table.deleted, builder: (column) => ColumnOrderings(column));
+
+  $$UsersTableOrderingComposer get owner {
+    final $$UsersTableOrderingComposer composer = $composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.owner,
+        referencedTable: $db.users,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder,
+                {$addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer}) =>
+            $$UsersTableOrderingComposer(
+              $db: $db,
+              $table: $db.users,
+              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+              joinBuilder: joinBuilder,
+              $removeJoinBuilderFromRootComposer:
+                  $removeJoinBuilderFromRootComposer,
+            ));
+    return composer;
+  }
+}
+
+class $GroupsAnnotationComposer extends Composer<_$Database, Groups> {
+  $GroupsAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get title =>
+      $composableBuilder(column: $table.title, builder: (column) => column);
+
+  GeneratedColumn<bool> get deleted =>
+      $composableBuilder(column: $table.deleted, builder: (column) => column);
+
+  $$UsersTableAnnotationComposer get owner {
+    final $$UsersTableAnnotationComposer composer = $composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.owner,
+        referencedTable: $db.users,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder,
+                {$addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer}) =>
+            $$UsersTableAnnotationComposer(
+              $db: $db,
+              $table: $db.users,
+              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+              joinBuilder: joinBuilder,
+              $removeJoinBuilderFromRootComposer:
+                  $removeJoinBuilderFromRootComposer,
+            ));
+    return composer;
+  }
+}
+
 class $GroupsTableManager extends RootTableManager<
     _$Database,
     Groups,
     Group,
     $GroupsFilterComposer,
     $GroupsOrderingComposer,
-    $GroupsProcessedTableManager,
-    $GroupsInsertCompanionBuilder,
-    $GroupsUpdateCompanionBuilder> {
+    $GroupsAnnotationComposer,
+    $GroupsCreateCompanionBuilder,
+    $GroupsUpdateCompanionBuilder,
+    (Group, $GroupsReferences),
+    Group,
+    PrefetchHooks Function({bool owner})> {
   $GroupsTableManager(_$Database db, Groups table)
       : super(TableManagerState(
           db: db,
           table: table,
-          filteringComposer: $GroupsFilterComposer(ComposerState(db, table)),
-          orderingComposer: $GroupsOrderingComposer(ComposerState(db, table)),
-          getChildManagerBuilder: (p) => $GroupsProcessedTableManager(p),
-          getUpdateCompanionBuilder: ({
+          createFilteringComposer: () =>
+              $GroupsFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $GroupsOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $GroupsAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
             Value<int> id = const Value.absent(),
             Value<String> title = const Value.absent(),
             Value<bool?> deleted = const Value.absent(),
@@ -1088,7 +1425,7 @@ class $GroupsTableManager extends RootTableManager<
             deleted: deleted,
             owner: owner,
           ),
-          getInsertCompanionBuilder: ({
+          createCompanionCallback: ({
             Value<int> id = const Value.absent(),
             required String title,
             Value<bool?> deleted = const Value.absent(),
@@ -1100,82 +1437,58 @@ class $GroupsTableManager extends RootTableManager<
             deleted: deleted,
             owner: owner,
           ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), $GroupsReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: ({owner = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins: <
+                  T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic>>(state) {
+                if (owner) {
+                  state = state.withJoin(
+                    currentTable: table,
+                    currentColumn: table.owner,
+                    referencedTable: $GroupsReferences._ownerTable(db),
+                    referencedColumn: $GroupsReferences._ownerTable(db).id,
+                  ) as T;
+                }
+
+                return state;
+              },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
         ));
 }
 
-class $GroupsProcessedTableManager extends ProcessedTableManager<
+typedef $GroupsProcessedTableManager = ProcessedTableManager<
     _$Database,
     Groups,
     Group,
     $GroupsFilterComposer,
     $GroupsOrderingComposer,
-    $GroupsProcessedTableManager,
-    $GroupsInsertCompanionBuilder,
-    $GroupsUpdateCompanionBuilder> {
-  $GroupsProcessedTableManager(super.$state);
-}
-
-class $GroupsFilterComposer extends FilterComposer<_$Database, Groups> {
-  $GroupsFilterComposer(super.$state);
-  ColumnFilters<int> get id => $state.composableBuilder(
-      column: $state.table.id,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<String> get title => $state.composableBuilder(
-      column: $state.table.title,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<bool> get deleted => $state.composableBuilder(
-      column: $state.table.deleted,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  $$UsersTableFilterComposer get owner {
-    final $$UsersTableFilterComposer composer = $state.composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.owner,
-        referencedTable: $state.db.users,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder, parentComposers) => $$UsersTableFilterComposer(
-            ComposerState(
-                $state.db, $state.db.users, joinBuilder, parentComposers)));
-    return composer;
-  }
-}
-
-class $GroupsOrderingComposer extends OrderingComposer<_$Database, Groups> {
-  $GroupsOrderingComposer(super.$state);
-  ColumnOrderings<int> get id => $state.composableBuilder(
-      column: $state.table.id,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<String> get title => $state.composableBuilder(
-      column: $state.table.title,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<bool> get deleted => $state.composableBuilder(
-      column: $state.table.deleted,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  $$UsersTableOrderingComposer get owner {
-    final $$UsersTableOrderingComposer composer = $state.composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.owner,
-        referencedTable: $state.db.users,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder, parentComposers) => $$UsersTableOrderingComposer(
-            ComposerState(
-                $state.db, $state.db.users, joinBuilder, parentComposers)));
-    return composer;
-  }
-}
-
-typedef $NotesInsertCompanionBuilder = NotesCompanion Function({
+    $GroupsAnnotationComposer,
+    $GroupsCreateCompanionBuilder,
+    $GroupsUpdateCompanionBuilder,
+    (Group, $GroupsReferences),
+    Group,
+    PrefetchHooks Function({bool owner})>;
+typedef $NotesCreateCompanionBuilder = NotesCompanion Function({
   required String title,
   required String content,
   required String searchTerms,
@@ -1188,23 +1501,83 @@ typedef $NotesUpdateCompanionBuilder = NotesCompanion Function({
   Value<int> rowid,
 });
 
+class $NotesFilterComposer extends Composer<_$Database, Notes> {
+  $NotesFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get title => $composableBuilder(
+      column: $table.title, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get content => $composableBuilder(
+      column: $table.content, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get searchTerms => $composableBuilder(
+      column: $table.searchTerms, builder: (column) => ColumnFilters(column));
+}
+
+class $NotesOrderingComposer extends Composer<_$Database, Notes> {
+  $NotesOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get title => $composableBuilder(
+      column: $table.title, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get content => $composableBuilder(
+      column: $table.content, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get searchTerms => $composableBuilder(
+      column: $table.searchTerms, builder: (column) => ColumnOrderings(column));
+}
+
+class $NotesAnnotationComposer extends Composer<_$Database, Notes> {
+  $NotesAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get title =>
+      $composableBuilder(column: $table.title, builder: (column) => column);
+
+  GeneratedColumn<String> get content =>
+      $composableBuilder(column: $table.content, builder: (column) => column);
+
+  GeneratedColumn<String> get searchTerms => $composableBuilder(
+      column: $table.searchTerms, builder: (column) => column);
+}
+
 class $NotesTableManager extends RootTableManager<
     _$Database,
     Notes,
     Note,
     $NotesFilterComposer,
     $NotesOrderingComposer,
-    $NotesProcessedTableManager,
-    $NotesInsertCompanionBuilder,
-    $NotesUpdateCompanionBuilder> {
+    $NotesAnnotationComposer,
+    $NotesCreateCompanionBuilder,
+    $NotesUpdateCompanionBuilder,
+    (Note, BaseReferences<_$Database, Notes, Note>),
+    Note,
+    PrefetchHooks Function()> {
   $NotesTableManager(_$Database db, Notes table)
       : super(TableManagerState(
           db: db,
           table: table,
-          filteringComposer: $NotesFilterComposer(ComposerState(db, table)),
-          orderingComposer: $NotesOrderingComposer(ComposerState(db, table)),
-          getChildManagerBuilder: (p) => $NotesProcessedTableManager(p),
-          getUpdateCompanionBuilder: ({
+          createFilteringComposer: () =>
+              $NotesFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $NotesOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $NotesAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
             Value<String> title = const Value.absent(),
             Value<String> content = const Value.absent(),
             Value<String> searchTerms = const Value.absent(),
@@ -1216,7 +1589,7 @@ class $NotesTableManager extends RootTableManager<
             searchTerms: searchTerms,
             rowid: rowid,
           ),
-          getInsertCompanionBuilder: ({
+          createCompanionCallback: ({
             required String title,
             required String content,
             required String searchTerms,
@@ -1228,60 +1601,29 @@ class $NotesTableManager extends RootTableManager<
             searchTerms: searchTerms,
             rowid: rowid,
           ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
         ));
 }
 
-class $NotesProcessedTableManager extends ProcessedTableManager<
+typedef $NotesProcessedTableManager = ProcessedTableManager<
     _$Database,
     Notes,
     Note,
     $NotesFilterComposer,
     $NotesOrderingComposer,
-    $NotesProcessedTableManager,
-    $NotesInsertCompanionBuilder,
-    $NotesUpdateCompanionBuilder> {
-  $NotesProcessedTableManager(super.$state);
-}
+    $NotesAnnotationComposer,
+    $NotesCreateCompanionBuilder,
+    $NotesUpdateCompanionBuilder,
+    (Note, BaseReferences<_$Database, Notes, Note>),
+    Note,
+    PrefetchHooks Function()>;
 
-class $NotesFilterComposer extends FilterComposer<_$Database, Notes> {
-  $NotesFilterComposer(super.$state);
-  ColumnFilters<String> get title => $state.composableBuilder(
-      column: $state.table.title,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<String> get content => $state.composableBuilder(
-      column: $state.table.content,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<String> get searchTerms => $state.composableBuilder(
-      column: $state.table.searchTerms,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-}
-
-class $NotesOrderingComposer extends OrderingComposer<_$Database, Notes> {
-  $NotesOrderingComposer(super.$state);
-  ColumnOrderings<String> get title => $state.composableBuilder(
-      column: $state.table.title,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<String> get content => $state.composableBuilder(
-      column: $state.table.content,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<String> get searchTerms => $state.composableBuilder(
-      column: $state.table.searchTerms,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-}
-
-class _$DatabaseManager {
+class $DatabaseManager {
   final _$Database _db;
-  _$DatabaseManager(this._db);
+  $DatabaseManager(this._db);
   $$UsersTableTableManager get users =>
       $$UsersTableTableManager(_db, _db.users);
   $GroupsTableManager get groups => $GroupsTableManager(_db, _db.groups);

@@ -1,8 +1,12 @@
 @TestOn('vm')
+library;
+
+import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
 
+import 'package:async/async.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:drift/src/sqlite3/database.dart';
@@ -55,6 +59,48 @@ void main() {
 
       await d.file('test.db', anything).validate();
       expect(receivePort, emits(message));
+    });
+
+    test('read pool cannot be negative', () {
+      final file = File(d.path('test.db'));
+
+      expect(() => NativeDatabase.createInBackground(file, readPool: -4),
+          throwsRangeError);
+    });
+
+    test('read pool', () async {
+      final file = File(d.path('test.db'));
+
+      final db = TodoDb(
+        NativeDatabase.createInBackground(
+          file,
+          setup: (db) {
+            var counter = 0;
+
+            db.createFunction(
+                functionName: 'inc_counter', function: (args) => counter++);
+          },
+          readPool: 10,
+        ),
+      );
+
+      final group = FutureGroup<void>();
+      for (var i = 0; i < 100; i++) {
+        final future = db
+            .customSelect('SELECT inc_counter() AS r;')
+            .getSingle()
+            .then((row) {
+          final counter = row.data['r'] as int;
+          expect(counter < 20, isTrue,
+              reason: 'should distribute somewhat evenly, counter is $counter');
+        });
+
+        group.add(future);
+      }
+
+      group.close();
+      await group.future;
+      await db.close();
     });
   });
 
@@ -212,7 +258,8 @@ void main() {
       );
 
       addTearDown(db.close);
-      await db.customSelect('select 1').get(); // open database
+      final rows = await db.customSelect('select * from sqlite_schema').get();
+      expect(rows, isEmpty);
     }
 
     test(
@@ -240,6 +287,15 @@ void main() {
     );
 
     test(
+      'in background with read pool',
+      () => runTest(NativeDatabase.createBackgroundConnection(
+        File(d.path('test.db')),
+        enableMigrations: false,
+        readPool: 10,
+      )),
+    );
+
+    test(
       'opened',
       () => runTest(NativeDatabase.opened(
         sqlite3.openInMemory(),
@@ -261,6 +317,25 @@ void main() {
     await expectLater(db.customSelect('SELECT 1').get(), throwsA(exception));
 
     await db.close();
+  });
+
+  test('customStatement can run multiple statements', () async {
+    final db = TodoDb(NativeDatabase.memory());
+    db.migration = MigrationStrategy(onCreate: (_) async {
+      await db.customStatement('''
+CREATE TABLE users (
+  id INTEGER NOT NULL PRIMARY KEY,
+  name TEXT NOT NULL
+);
+
+CREATE TABLE groups (
+  id INTEGER NOT NULL PRIMARY KEY,
+  name TEXT NOT NULL
+);
+''');
+    });
+
+    await db.customSelect('SELECT * FROM groups').get();
   });
 }
 

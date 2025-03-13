@@ -32,17 +32,43 @@ void main() {
 
     // Equals
     expect(
-        db.managers.tableWithEveryColumnType
+        await db.managers.tableWithEveryColumnType
             .orderBy((o) => o.aDateTime.desc())
             .get()
             .then((value) => value[0].id),
-        completion(3));
+        3);
     expect(
-        db.managers.tableWithEveryColumnType
+        await db.managers.tableWithEveryColumnType
             .orderBy((o) => o.aDateTime.asc())
             .get()
             .then((value) => value[0].id),
-        completion(1));
+        1);
+  });
+
+  test('nulls first', () async {
+    await db.managers.todosTable.bulkCreate((o) => [
+          o(content: 'a'),
+          o(title: Value('first title'), content: 'b'),
+          o(title: Value('second title'), content: 'c'),
+        ]);
+
+    final entries = await db.managers.todosTable
+        .orderBy((o) => o.title.asc(nulls: NullsOrder.first))
+        .get();
+    expect(entries.map((e) => e.content), ['a', 'b', 'c']);
+  });
+
+  test('nulls last', () async {
+    await db.managers.todosTable.bulkCreate((o) => [
+          o(title: Value('second title'), content: 'a'),
+          o(title: Value('first title'), content: 'b'),
+          o(content: 'c'),
+        ]);
+
+    final entries = await db.managers.todosTable
+        .orderBy((o) => o.title.desc(nulls: NullsOrder.last))
+        .get();
+    expect(entries.map((e) => e.content), ['a', 'b', 'c']);
   });
 
   test('manager - order related', () async {
@@ -55,14 +81,14 @@ void main() {
         id: Value(RowId(1)),
         content: "Get that english homework done",
         title: Value("English Homework"),
-        category: Value(workCategoryId),
+        category: Value(RowId(workCategoryId)),
         status: Value(TodoStatus.open),
         targetDate: Value(DateTime.now().add(Duration(days: 1, seconds: 15)))));
     await db.managers.todosTable.create((o) => o(
         id: Value(RowId(2)),
         content: "Finish that Book report",
         title: Value("Book Report"),
-        category: Value(workCategoryId),
+        category: Value(RowId(workCategoryId)),
         status: Value(TodoStatus.done),
         targetDate:
             Value(DateTime.now().subtract(Duration(days: 2, seconds: 15)))));
@@ -70,22 +96,22 @@ void main() {
         id: Value(RowId(3)),
         content: "Get that math homework done",
         title: Value("Math Homework"),
-        category: Value(schoolCategoryId),
+        category: Value(RowId(schoolCategoryId)),
         status: Value(TodoStatus.open),
         targetDate: Value(DateTime.now().add(Duration(days: 1, seconds: 10)))));
     await db.managers.todosTable.create((o) => o(
         id: Value(RowId(4)),
         content: "Finish that report",
         title: Value("Report"),
-        category: Value(schoolCategoryId),
+        category: Value(RowId(schoolCategoryId)),
         status: Value(TodoStatus.workInProgress),
         targetDate: Value(DateTime.now().add(Duration(days: 2, seconds: 10)))));
     // Order by related
     expect(
-        db.managers.todosTable
+        await db.managers.todosTable
             .orderBy((o) => o.category.id.asc())
             .get()
             .then((value) => value.map((e) => e.id).toList()),
-        completion([3, 4, 1, 2]));
+        [3, 4, 1, 2]);
   });
 }

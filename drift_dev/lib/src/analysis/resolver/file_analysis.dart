@@ -22,6 +22,13 @@ class FileAnalyzer {
     final knownTypes = await driver.knownTypes;
     final typeMapping = await driver.typeMapping;
 
+    for (final file in driver.cache.crawl(state).toList()) {
+      await driver.resolveElements(file.ownUri);
+
+      result.allAvailableElements
+          .addAll(file.analysis.values.map((e) => e.result).whereType());
+    }
+
     if (state.extension == '.dart') {
       for (final elementAnalysis in state.analysis.values) {
         final element = elementAnalysis.result;
@@ -71,6 +78,19 @@ class FileAnalyzer {
                     (e) => e is DefinedSqlQuery || e is DriftSchemaElement);
               })
               .whereType<DriftElement>()
+              .where((e) {
+                // Exclude any private tables that do not reside in the same library
+                // as the DriftDatabase.
+                // Failure to exclude these, can generate dart code which references
+                // classes that cannot be legally accessed - and will not compile.
+                // Private classes residing in the same library are allowed, as
+                // per dart language accessibility rules.
+                if (e is DriftElementWithResultSet &&
+                    e.entityInfoName.startsWith(r'$_')) {
+                  return e.id.libraryUri == element.id.libraryUri;
+                }
+                return true;
+              })
               .followedBy(availableByDefault)
               .transitiveClosureUnderReferences()
               .sortTopologicallyOrElse(driver.backend.log.severe);
@@ -117,8 +137,19 @@ class FileAnalyzer {
           result.resolvedDatabases[element.id] =
               ResolvedDatabaseAccessor(queries, imports, availableElements);
         } else if (element is DriftIndex) {
-          // We need the SQL AST for each index to create them in code
-          element.createStatementForDartDefinition();
+          if (element.createStmt != null) {
+            final engine = driver.newSqlEngine();
+            final parsed = engine.parse(element.createStmt!);
+
+            if (parsed.rootNode case CreateIndexStatement stmt) {
+              element.parsedStatement = stmt;
+            }
+          }
+
+          if (element.parsedStatement == null) {
+            // We need the SQL AST for each index to create them in code
+            element.createStatementForDartDefinition();
+          }
         }
       }
     } else if (state.extension == '.drift' || state.extension == '.moor') {
@@ -153,9 +184,10 @@ class FileAnalyzer {
               typeMapping: typeMapping,
               requiredVariables: options.variables);
 
-          result.resolvedQueries[element.id] =
+          final analyzed = result.resolvedQueries[element.id] =
               await analyzer.analyze(element, sourceForCustomName: stmt.as)
                 ..declaredInDriftFile = true;
+          element.resolved = analyzed;
 
           for (final error in analyzer.lints) {
             result.analysisErrors.add(DriftAnalysisError.fromSqlError(error));
@@ -197,8 +229,8 @@ class FileAnalyzer {
         final variable = parameter.variable;
 
         if (parameter.isRequired) {
-          if (variable is ColonNamedVariable) {
-            requiredName.add(variable.name);
+          if (variable is NamedVariable) {
+            requiredName.add(variable.fullName);
           } else if (variable is NumberedVariable) {
             requiredIndex.add(variable.resolvedIndex!);
           }
@@ -209,8 +241,8 @@ class FileAnalyzer {
               .resolveColumnType(parameter.typeName)
               .withNullable(parameter.orNull);
 
-          if (variable is ColonNamedVariable) {
-            namedHints[variable.name] = type;
+          if (variable is NamedVariable) {
+            namedHints[variable.fullName] = type;
           } else if (variable is NumberedVariable) {
             indexedHints[variable.resolvedIndex!] = type;
           }

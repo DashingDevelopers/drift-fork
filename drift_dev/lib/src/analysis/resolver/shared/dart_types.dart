@@ -139,19 +139,22 @@ ExistingRowClass? validateExistingClass(
     }
   }
 
-  if (generateInsertable) {
-    // Go through all columns, make sure that the class has getters for them.
-    final missingGetters = <String>[];
+  final getters = <String, String>{};
+  final missingGetters = <String>[];
+  for (final column in columns) {
+    final matchingField = dartClass.classElement.augmented.lookUpGetter(
+      name: column.nameInDart,
+      library: dartClass.classElement.library,
+    );
 
-    for (final column in columns) {
-      final matchingField = dartClass.classElement.augmented.lookUpGetter(
-          name: column.nameInDart, library: dartClass.classElement.library);
-
-      if (matchingField == null) {
-        missingGetters.add(column.nameInDart);
-      }
+    if (matchingField case final field?) {
+      getters[column.nameInSql] = field.name;
+    } else {
+      missingGetters.add(column.nameInDart);
     }
+  }
 
+  if (generateInsertable) {
     if (missingGetters.isNotEmpty) {
       step.reportError(DriftAnalysisError.forDartElement(
         dartClass.classElement,
@@ -173,6 +176,7 @@ ExistingRowClass? validateExistingClass(
       for (final named in namedColumns.entries)
         named.key.name: named.value.nameInSql,
     },
+    columnGetters: getters,
     generateInsertable: generateInsertable,
     isAsyncFactory: isAsyncFactory,
   );
@@ -193,11 +197,13 @@ ExistingRowClass validateRowClassFromRecordType(
   };
 
   final namedColumns = <String, String>{};
+  final columnGetters = <String, String>{};
 
   for (final parameter in dartType.namedFields) {
     final column = unmatchedColumnsByName.remove(parameter.name);
     if (column != null) {
       namedColumns[parameter.name] = column.nameInSql;
+      columnGetters[column.nameInSql] = parameter.name;
 
       checkType(
         column.sqlType,
@@ -232,6 +238,7 @@ ExistingRowClass validateRowClassFromRecordType(
     positionalColumns: const [],
     namedColumns: namedColumns,
     generateInsertable: generateInsertable,
+    columnGetters: columnGetters,
   );
 }
 
@@ -258,6 +265,9 @@ ExistingRowClass defaultRecordRowClass({
     positionalColumns: [],
     namedColumns: {
       for (final column in columns) column.nameInDart: column.nameInSql,
+    },
+    columnGetters: {
+      for (final column in columns) column.nameInSql: column.nameInDart,
     },
   );
 }
@@ -313,6 +323,8 @@ AppliedTypeConverter? readTypeConverter(
 
   final asJsonConverter = helper.asJsonTypeConverter(staticType);
   final appliesToJsonToo = asJsonConverter != null;
+  final jsonTypeNullable = appliesToJsonToo &&
+      typeSystem.isNullable(asJsonConverter.typeArguments[2]);
 
   // Make the type converter support nulls by just mapping null to null if this
   // converter is otherwise non-nullable in both directions.
@@ -345,6 +357,7 @@ AppliedTypeConverter? readTypeConverter(
     sqlType: columnType,
     dartTypeIsNullable: dartTypeNullable,
     sqlTypeIsNullable: sqlTypeNullable,
+    jsonTypeIsNullable: jsonTypeNullable,
     isDriftEnumTypeConverter: false,
   );
 }
@@ -394,6 +407,7 @@ AppliedTypeConverter readEnumConverter(
         : DriftSqlType.string),
     dartTypeIsNullable: false,
     sqlTypeIsNullable: false,
+    jsonTypeIsNullable: false,
     isDriftEnumTypeConverter: true,
   );
 }

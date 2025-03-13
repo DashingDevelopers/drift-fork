@@ -56,19 +56,20 @@ class DriftProtocol {
   Message deserialize(Object message) {
     if (message is! List) throw const FormatException('Cannot read message');
 
-    final tag = message[0];
-    final id = message[1] as int;
+    final tag = castInt(message[0]);
+    final id = castInt(message[1]);
 
     switch (tag) {
       case _tag_Request:
-        return Request(id, decodePayload(message[2]));
+        return Request(id, decodePayload(message[2]) as RequestPayload?);
       case _tag_Response_error:
         final stringTrace = message[3] as String?;
 
         return ErrorResponse(id, message[2] as Object,
             stringTrace != null ? StackTrace.fromString(stringTrace) : null);
       case _tag_Response_success:
-        return SuccessResponse(id, decodePayload(message[2]));
+        return SuccessResponse(
+            id, decodePayload(message[2]) as ResponsePayload?);
       case _tag_Response_cancelled:
         return CancelledResponse(id);
     }
@@ -77,7 +78,7 @@ class DriftProtocol {
   }
 
   dynamic encodePayload(dynamic payload) {
-    if (payload == null || payload is bool) return payload;
+    if (payload == null) return payload;
 
     if (payload is NoArgsRequest) {
       return payload.index;
@@ -100,7 +101,7 @@ class DriftProtocol {
           ],
         payload.executorId,
       ];
-    } else if (payload is RunTransactionAction) {
+    } else if (payload is RunNestedExecutorControl) {
       return [
         _tag_RunTransactionAction,
         payload.control.index,
@@ -153,26 +154,38 @@ class DriftProtocol {
       }
     } else if (payload is RequestCancellation) {
       return [_tag_RequestCancellation, payload.originalRequestId];
-    } else {
-      return [_tag_DirectValue, payload];
+    } else if (payload is PrimitiveResponsePayload) {
+      return switch (payload.message) {
+        final bool boolean => boolean,
+        final int integer => [_tag_DirectValue, integer],
+        _ => throw UnsupportedError('Unknown primitive response'),
+      };
     }
   }
 
   dynamic decodePayload(dynamic encoded) {
-    if (encoded == null || encoded is bool) return encoded;
+    if (encoded == null) {
+      return null;
+    }
+    if (encoded is bool) {
+      return PrimitiveResponsePayload.bool(encoded);
+    }
 
     int tag;
     List? fullMessage;
 
-    if (encoded is int) {
-      tag = encoded;
+    if (isInt(encoded)) {
+      tag = castInt(encoded);
     } else {
       fullMessage = encoded as List;
-      tag = fullMessage[0] as int;
+      tag = castInt(fullMessage[0]);
     }
 
-    int readInt(int index) => fullMessage![index] as int;
-    int? readNullableInt(int index) => fullMessage![index] as int?;
+    int readInt(int index) => castInt(fullMessage![index]);
+    int? readNullableInt(int index) => switch (fullMessage![index]) {
+          null => null,
+          var other => castInt(other),
+        };
 
     switch (tag) {
       case _tag_NoArgsRequest_terminateAll:
@@ -189,16 +202,23 @@ class DriftProtocol {
 
         for (var i = 2; i < fullMessage.length - 1; i++) {
           final list = fullMessage[i] as List;
-          args.add(ArgumentsForBatchedStatement(
-              list[0] as int, list.skip(1).toList()));
+          args.add(
+            ArgumentsForBatchedStatement(
+              castInt(list[0]),
+              [for (final encoded in list.skip(1)) _decodeDbValue(encoded)],
+            ),
+          );
         }
 
-        final executorId = fullMessage.last as int?;
+        final executorId = switch (fullMessage.last) {
+          null => null,
+          var other => castInt(other),
+        };
         return ExecuteBatchedStatement(
             BatchedStatements(sql, args), executorId);
       case _tag_RunTransactionAction:
-        final control = TransactionControl.values[readInt(1)];
-        return RunTransactionAction(control, readNullableInt(2));
+        final control = NestedExecutorControl.values[readInt(1)];
+        return RunNestedExecutorControl(control, readNullableInt(2));
       case _tag_EnsureOpen:
         return EnsureOpen(readInt(1), readNullableInt(2));
       case _tag_ServerInfo:
@@ -212,7 +232,10 @@ class DriftProtocol {
         final updates = <TableUpdate>[];
         for (var i = 1; i < fullMessage!.length; i++) {
           final encodedUpdate = fullMessage[i] as List;
-          final kindIndex = encodedUpdate[1] as int?;
+          final kindIndex = switch (encodedUpdate[1]) {
+            null => null,
+            var other => castInt(other),
+          };
 
           updates.add(
             TableUpdate(encodedUpdate[0] as String,
@@ -243,7 +266,7 @@ class DriftProtocol {
       case _tag_RequestCancellation:
         return RequestCancellation(readInt(1));
       case _tag_DirectValue:
-        return encoded[1];
+        return PrimitiveResponsePayload.int(castInt(encoded[1]));
     }
 
     throw ArgumentError.value(tag, 'tag', 'Tag was unknown');
@@ -271,11 +294,11 @@ class DriftProtocol {
   }
 }
 
-abstract class Message {}
+sealed class Message {}
 
 /// A request sent over a communication channel. It is expected that the other
 /// peer eventually answers with a matching response.
-class Request extends Message {
+final class Request extends Message {
   /// The id of this request.
   ///
   /// Ids are generated by the sender, so they are only unique per direction
@@ -283,7 +306,7 @@ class Request extends Message {
   final int id;
 
   /// The payload associated with this request.
-  final Object? payload;
+  final RequestPayload? payload;
 
   Request(this.id, this.payload);
 
@@ -293,9 +316,13 @@ class Request extends Message {
   }
 }
 
-class SuccessResponse extends Message {
+sealed class RequestPayload {}
+
+sealed class ResponsePayload {}
+
+final class SuccessResponse extends Message {
   final int requestId;
-  final Object? response;
+  final ResponsePayload? response;
 
   SuccessResponse(this.requestId, this.response);
 
@@ -305,7 +332,14 @@ class SuccessResponse extends Message {
   }
 }
 
-class ErrorResponse extends Message {
+final class PrimitiveResponsePayload implements ResponsePayload {
+  final Object message;
+
+  PrimitiveResponsePayload.bool(bool this.message);
+  PrimitiveResponsePayload.int(int this.message);
+}
+
+final class ErrorResponse extends Message {
   final int requestId;
   final Object error;
   final StackTrace? stackTrace;
@@ -318,7 +352,7 @@ class ErrorResponse extends Message {
   }
 }
 
-class CancelledResponse extends Message {
+final class CancelledResponse extends Message {
   final int requestId;
 
   CancelledResponse(this.requestId);
@@ -330,7 +364,7 @@ class CancelledResponse extends Message {
 }
 
 /// A request without further parameters
-enum NoArgsRequest {
+enum NoArgsRequest implements RequestPayload {
   /// Close the background isolate, disconnect all clients, release all
   /// associated resources
   terminateAll,
@@ -345,7 +379,7 @@ enum StatementMethod {
 
 /// Sent from the client to run a sql query. The server replies with the
 /// result.
-class ExecuteQuery {
+final class ExecuteQuery implements RequestPayload {
   final StatementMethod method;
   final String sql;
   final List<dynamic> args;
@@ -367,7 +401,7 @@ class ExecuteQuery {
 /// Whether this is supported or not depends on the server and its internal
 /// state. This request will be immediately be acknowledged with a null
 /// response, which does not indicate whether a cancellation actually happened.
-class RequestCancellation {
+final class RequestCancellation implements RequestPayload {
   final int originalRequestId;
 
   RequestCancellation(this.originalRequestId);
@@ -379,28 +413,39 @@ class RequestCancellation {
 }
 
 /// Sent from the client to run [BatchedStatements]
-class ExecuteBatchedStatement {
+final class ExecuteBatchedStatement implements RequestPayload {
   final BatchedStatements stmts;
   final int? executorId;
 
   ExecuteBatchedStatement(this.stmts, [this.executorId]);
 }
 
-enum TransactionControl {
-  /// When using [begin], the [RunTransactionAction.executorId] refers to the
-  /// executor starting the transaction. The server must reply with an int
-  /// representing the created transaction executor.
-  begin,
+enum NestedExecutorControl {
+  /// When using [beginTransaction], the [RunNestedExecutorControl.executorId]
+  /// refers to the executor starting the transaction. The server must reply
+  /// with an int representing the created transaction executor.
+  beginTransaction,
   commit,
   rollback,
+
+  /// This does not start a transaction, but requests a [QueryExecutor] which
+  /// has exclusive control over the parent executor (meaning that no queries
+  /// go through on the parent executor until the returned child executor is
+  /// closed with [endExclusive]).
+  ///
+  /// See also: [QueryExecutor.beginExclusive], which the server calls to
+  /// implement this.
+  startExclusive,
+  endExclusive,
 }
 
-/// Sent from the client to commit or rollback a transaction
-class RunTransactionAction {
-  final TransactionControl control;
+/// Sent from the client to commit or rollback a transaction as well as managing
+/// an exclusive sub-executor.
+final class RunNestedExecutorControl implements RequestPayload {
+  final NestedExecutorControl control;
   final int? executorId;
 
-  RunTransactionAction(this.control, this.executorId);
+  RunNestedExecutorControl(this.control, this.executorId);
 
   @override
   String toString() {
@@ -410,7 +455,7 @@ class RunTransactionAction {
 
 /// Sent from the client to the server. The server should open the underlying
 /// database connection, using the [schemaVersion].
-class EnsureOpen {
+final class EnsureOpen implements RequestPayload {
   final int schemaVersion;
   final int? executorId;
 
@@ -422,7 +467,7 @@ class EnsureOpen {
   }
 }
 
-class ServerInfo {
+class ServerInfo implements RequestPayload {
   final SqlDialect dialect;
 
   ServerInfo(this.dialect);
@@ -435,7 +480,7 @@ class ServerInfo {
 
 /// Sent from the server to the client when it should run the before open
 /// callback.
-class RunBeforeOpen {
+final class RunBeforeOpen implements RequestPayload {
   final OpeningDetails details;
   final int createdExecutor;
 
@@ -450,7 +495,7 @@ class RunBeforeOpen {
 /// Sent to notify that a previous query has updated some tables. When a server
 /// receives this message, it replies with `null` but forwards a new request
 /// with this payload to all connected clients.
-class NotifyTablesUpdated {
+final class NotifyTablesUpdated implements RequestPayload {
   final List<TableUpdate> updates;
 
   NotifyTablesUpdated(this.updates);
@@ -461,8 +506,32 @@ class NotifyTablesUpdated {
   }
 }
 
-class SelectResult {
+class SelectResult implements ResponsePayload {
+  /// Each [Object] in [rows] is one of: [String], [int], [double], [BigInt],
+  /// `List<int>`.
   final List<Map<String, Object?>> rows;
 
   const SelectResult(this.rows);
+}
+
+const _isDart2Wasm = bool.fromEnvironment('dart.tool.dart2wasm');
+
+int castInt(Object? source) {
+  if (_isDart2Wasm) {
+    return (source as num).toInt();
+  } else {
+    return source as int;
+  }
+}
+
+bool isInt(Object? source) {
+  if (_isDart2Wasm) {
+    return switch (source) {
+      int _ => true,
+      double jsDouble => jsDouble.toInt() == jsDouble,
+      _ => false,
+    };
+  } else {
+    return source is int;
+  }
 }

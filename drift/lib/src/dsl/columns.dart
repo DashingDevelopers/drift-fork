@@ -85,6 +85,9 @@ typedef BlobColumn = Column<Uint8List>;
 /// A column that stores floating point numeric values.
 typedef RealColumn = Column<double>;
 
+/// A column storing arbitrary values using SQLite's `ANY` type.
+typedef AnyColumn = Column<DriftAny>;
+
 class _BaseColumnBuilder<T extends Object> {}
 
 /// A column builder is used to specify which columns should appear in a table.
@@ -207,11 +210,20 @@ extension BuildColumn<T extends Object> on ColumnBuilder<T> {
   ///   await customStatement('PRAGMA foreign_keys = ON');
   /// }
   /// ```
+  ///
+  /// The optional [onUpdate] and [onDelete] actions can be used to
+  /// automatically propagate changes from the referenced row to this column.
+  /// See [KeyAction] for details.
+  ///
+  /// [initiallyDeferred] can be set to `true` to generate the foreign key as
+  /// `DEFERRABLE INITIALLY DEFERRED`, meaning that it is checked at the end of
+  /// a transaction only instead of after every statement.
   ColumnBuilder<T> references(
     Type table,
     Symbol column, {
     KeyAction? onUpdate,
     KeyAction? onDelete,
+    bool initiallyDeferred = false,
   }) {
     _isGenerated();
   }

@@ -2,52 +2,56 @@ import 'dart:async';
 
 import 'package:collection/collection.dart';
 import 'package:drift/drift.dart';
+import 'package:drift/src/runtime/executor/stream_queries.dart';
+import 'package:drift/src/runtime/query_builder/query_builder.dart';
+import 'package:drift/src/utils/single_transformer.dart';
 import 'package:meta/meta.dart';
 
 part 'composer.dart';
 part 'filter.dart';
-part 'composable.dart';
+part 'join_builder.dart';
 part 'ordering.dart';
-
-sealed class _StatementType<T extends Table, DT> {
-  const _StatementType();
-}
-
-class _SimpleResult<T extends Table, DT> extends _StatementType<T, DT> {
-  final SimpleSelectStatement<T, DT> statement;
-  const _SimpleResult(this.statement);
-}
-
-class _JoinedResult<T extends Table, DT> extends _StatementType<T, DT> {
-  final JoinedSelectStatement<T, DT> statement;
-
-  const _JoinedResult(this.statement);
-}
+part 'references.dart';
+part 'computed_fields.dart';
 
 /// Defines a class that holds the state for a [BaseTableManager]
 ///
-/// It holds the state for manager of [T] table in [DB] database, used to return [DT] data classes/rows.
-/// It holds the [FS] Filters and [OS] Orderings for the manager.
+/// It holds the state for manager of [$Table] table in [$Database] database.
+/// It holds the [$FilterComposer] Filters and [$OrderingComposer] Orderings and [$ComputedFieldComposer] ComputedFields for the manager.
 ///
-/// It also holds the [CI] and [CU] functions that are used to create companion builders for inserting and updating data.
+/// There are 3 Dataclass generics:
+///   - [$Dataclass] is the dataclass that is used to interact with the table
+///   - [$DataclassWithReferences] is the dataclass that is returned when the manager is used with the [withReferences] method, this contains the dataclass and any referenced dataclasses
+///   - [$ActiveDataclass] is the dataclass that is returned when the manager is used, this is either [$Dataclass] or [$DataclassWithReferences], depending if the manager has had the [withReferences] method called on it
+///
+/// It also holds the [$CreateCompanionCallback] and [$UpdateCompanionCallback] functions that are used to create companion builders for inserting and updating data.
 /// E.G Instead of `CategoriesCompanion.insert(name: "School")` you would use `(f) => f(name: "School")`
 ///
-/// The [C] generic refers to the type of the child manager that will be created when a filter/ordering is applied
-
+/// The [$CreatePrefetchHooksCallback] refers to the function which the user will use to create a [PrefetchHooks] in `withReferences`
+/// See the [BaseReferences] class for more information on how this is used.
+///
+/// E.G.
+/// ```dart
+/// users.withReferences((prefetch) => prefetch(group: true))
+/// ```
+@immutable
 class TableManagerState<
-    DB extends GeneratedDatabase,
-    T extends Table,
-    DT,
-    FS extends FilterComposer<DB, T>,
-    OS extends OrderingComposer<DB, T>,
-    C extends ProcessedTableManager<DB, T, DT, FS, OS, C, CI, CU>,
-    CI extends Function,
-    CU extends Function> {
+    $Database extends GeneratedDatabase,
+    $Table extends Table,
+    $Dataclass,
+    $FilterComposer extends Composer<$Database, $Table>,
+    $OrderingComposer extends Composer<$Database, $Table>,
+    $ComputedFieldComposer extends Composer<$Database, $Table>,
+    $CreateCompanionCallback extends Function,
+    $UpdateCompanionCallback extends Function,
+    $DataclassWithReferences,
+    $ActiveDataclass,
+    $CreatePrefetchHooksCallback extends Function> {
   /// The database used to run the query.
-  final DB db;
+  final $Database db;
 
-  /// The table primary table from which to select from.
-  final T table;
+  /// The table that the manager is for
+  final $Table table;
 
   /// The expression that will be applied to the query
   final Expression<bool>? filter;
@@ -72,66 +76,155 @@ class TableManagerState<
   /// The [FilterComposer] for this [TableManagerState]
   /// This class will be used to create filtering [Expression]s
   /// which will be applied to the statement when its eventually created
-  final FS filteringComposer;
+  final $FilterComposer Function() createFilteringComposer;
 
   /// The [OrderingComposer] for this [TableManagerState]
   /// This class will be used to create [OrderingTerm]s
   /// which will be applied to the statement when its eventually created
-  final OS orderingComposer;
+  final $OrderingComposer Function() createOrderingComposer;
 
-  /// This function is used internaly to return a new instance of the child manager
-  final C Function(TableManagerState<DB, T, DT, FS, OS, C, CI, CU>)
-      _getChildManagerBuilder;
+  /// The callback that will be used to create the composer which
+  /// will be used to create computed fields for the query
+  final $ComputedFieldComposer Function() createComputedFieldComposer;
 
   /// This function is passed to the user to create a companion
   /// for inserting data into the table
-  final CI _getInsertCompanionBuilder;
+  final $CreateCompanionCallback _createCompanionCallback;
 
   /// This function is passed to the user to create a companion
   /// for updating data in the table
-  final CU _getUpdateCompanionBuilder;
+  final $UpdateCompanionCallback _updateCompanionCallback;
+
+  /// This function is used internally to convert a simple [$Dataclass] into one which has its references attached [$DataclassWithReferences].
+  /// This is used internally by [toActiveDataclass] and should not be used outside of this class.
+  final List<$DataclassWithReferences> Function(List<TypedResult>)
+      _withReferenceMapper;
+
+  /// Additional columns/expression that will be added to the query with computed fields
+  final Set<Expression> addedColumns;
+
+  /// This function is used to ensure that the correct dataclass type is returned by the manager.
+  ///
+  /// Depending on if `withReferences` was called, we will either return a list of [$Dataclass] or [$DataclassWithReferences]
+  List<$ActiveDataclass> toActiveDataclass(List<TypedResult> items) {
+    if ($DataclassWithReferences == $ActiveDataclass) {
+      return _withReferenceMapper(items) as List<$ActiveDataclass>;
+    } else {
+      return items.map((e) => e.readTable(_tableAsTableInfo)).toList()
+          as List<$ActiveDataclass>;
+    }
+  }
+
+  /// If this table has references, this field will contain the function that the user will use to create a [PrefetchHooks]
+  ///
+  /// E.G.
+  /// If the prefetch function would look like
+  /// ```dart
+  /// users.withReferences((prefetch) => prefetch(group: true))
+  /// ```
+  /// Then [_prefetchHooksCallback] would be
+  /// ```dart
+  /// ({bool group = false}) {
+  ///   return PrefetchHooks(...)
+  /// }
+  /// ```
+  final $CreatePrefetchHooksCallback? _prefetchHooksCallback;
+
+  /// Prefetched data, if references with prefetching enabled were added to this manager
+  ///
+  /// E.G.
+  /// ```dart
+  /// final (group,refs) = await groups.withReferences((prefetch) => prefetch(users: true)).getSingle();
+  /// final users = refs.users.prefetchedData;
+  /// /// For references which were not prefetched, this field will be null
+  /// final users = refs.admin.prefetchedData; // Returns null
+  /// ```
+  List<$ActiveDataclass>? get prefetchedData {
+    if (_prefetchedData == null) {
+      return null;
+    }
+    return toActiveDataclass(_prefetchedData);
+  }
+
+  final List<TypedResult>? _prefetchedData;
+
+  /// Once `withReferences` is called, this field will be set to the function that will be used to get the prefetched data
+  late final PrefetchHooks prefetchHooks;
 
   /// Defines a class which holds the state for a table manager
   /// It contains the database instance, the table instance, and any filters/orderings that will be applied to the query
-  /// This is held in a seperate class than the [BaseTableManager] so that the state can be passed down from the root manager to the lower level managers
+  /// This is held in a separate class than the [BaseTableManager] so that the state can be passed down from the root manager to the lower level managers
   ///
   /// This class is used internally by the [BaseTableManager] and should not be used directly
-  const TableManagerState(
+  TableManagerState(
       {required this.db,
       required this.table,
-      required this.filteringComposer,
-      required this.orderingComposer,
-      required C Function(TableManagerState<DB, T, DT, FS, OS, C, CI, CU>)
-          getChildManagerBuilder,
-      required CI getInsertCompanionBuilder,
-      required CU getUpdateCompanionBuilder,
+      required this.createFilteringComposer,
+      required this.createOrderingComposer,
+      required this.createComputedFieldComposer,
+      required $CreateCompanionCallback createCompanionCallback,
+      required $UpdateCompanionCallback updateCompanionCallback,
+      required List<$DataclassWithReferences> Function(List<TypedResult>)
+          withReferenceMapper,
+      required $CreatePrefetchHooksCallback? prefetchHooksCallback,
+      PrefetchHooks? prefetchHooks,
+      List<TypedResult>? prefetchedData,
       this.filter,
       this.distinct,
       this.limit,
       this.offset,
+      this.addedColumns = const {},
       this.orderingBuilders = const {},
       this.joinBuilders = const {}})
-      : _getChildManagerBuilder = getChildManagerBuilder,
-        _getInsertCompanionBuilder = getInsertCompanionBuilder,
-        _getUpdateCompanionBuilder = getUpdateCompanionBuilder;
+      : prefetchHooks = prefetchHooks ?? PrefetchHooks(db: db),
+        _prefetchedData = prefetchedData,
+        _prefetchHooksCallback = prefetchHooksCallback,
+        _withReferenceMapper = withReferenceMapper,
+        _createCompanionCallback = createCompanionCallback,
+        _updateCompanionCallback = updateCompanionCallback;
 
   /// Copy this state with the given values
-  TableManagerState<DB, T, DT, FS, OS, C, CI, CU> copyWith({
+  TableManagerState<
+      $Database,
+      $Table,
+      $Dataclass,
+      $FilterComposer,
+      $OrderingComposer,
+      $ComputedFieldComposer,
+      $CreateCompanionCallback,
+      $UpdateCompanionCallback,
+      $DataclassWithReferences,
+      $ActiveDataclass,
+      $CreatePrefetchHooksCallback> copyWith({
     bool? distinct,
     int? limit,
     int? offset,
     Expression<bool>? filter,
     Set<OrderingBuilder>? orderingBuilders,
     Set<JoinBuilder>? joinBuilders,
+    List<$Dataclass>? prefetchedData,
+    PrefetchHooks? prefetchHooks,
+    Set<Expression>? addedColumns,
   }) {
+    /// When we import prefetchedData, it's already in its Row Class,
+    /// we need to place it into a TypedResult for the manager to work with it
+    final prefetchedDataAsTypedResult = prefetchedData
+        ?.map((e) => TypedResult({_tableAsTableInfo: e}, QueryRow({}, db)))
+        .toList();
+
     return TableManagerState(
       db: db,
       table: table,
-      filteringComposer: filteringComposer,
-      orderingComposer: orderingComposer,
-      getChildManagerBuilder: _getChildManagerBuilder,
-      getInsertCompanionBuilder: _getInsertCompanionBuilder,
-      getUpdateCompanionBuilder: _getUpdateCompanionBuilder,
+      createFilteringComposer: createFilteringComposer,
+      createOrderingComposer: createOrderingComposer,
+      createComputedFieldComposer: createComputedFieldComposer,
+      createCompanionCallback: _createCompanionCallback,
+      updateCompanionCallback: _updateCompanionCallback,
+      withReferenceMapper: _withReferenceMapper,
+      prefetchHooksCallback: _prefetchHooksCallback,
+      addedColumns: addedColumns ?? this.addedColumns,
+      prefetchedData: prefetchedDataAsTypedResult ?? this._prefetchedData,
+      prefetchHooks: prefetchHooks ?? this.prefetchHooks,
       filter: filter ?? this.filter,
       joinBuilders: joinBuilders ?? this.joinBuilders,
       orderingBuilders: orderingBuilders ?? this.orderingBuilders,
@@ -141,78 +234,148 @@ class TableManagerState<
     );
   }
 
+  /// When a user calls `withReferences` on a manager, we return a copy which is
+  /// set to return a `$DataclassWithReferences` instead of just a `$Dataclass`
+  ///
+  /// This function is used to make that copy.
+  TableManagerState<
+      $Database,
+      $Table,
+      $Dataclass,
+      $FilterComposer,
+      $OrderingComposer,
+      $ComputedFieldComposer,
+      $CreateCompanionCallback,
+      $UpdateCompanionCallback,
+      $DataclassWithReferences,
+      $DataclassWithReferences,
+      $CreatePrefetchHooksCallback> copyWithActiveDataclass() {
+    return TableManagerState(
+      db: db,
+      table: table,
+      createFilteringComposer: createFilteringComposer,
+      createOrderingComposer: createOrderingComposer,
+      createComputedFieldComposer: createComputedFieldComposer,
+      createCompanionCallback: _createCompanionCallback,
+      updateCompanionCallback: _updateCompanionCallback,
+      withReferenceMapper: _withReferenceMapper,
+      filter: filter,
+      joinBuilders: joinBuilders,
+      orderingBuilders: orderingBuilders,
+      distinct: distinct,
+      limit: limit,
+      offset: offset,
+      prefetchHooksCallback: _prefetchHooksCallback,
+      prefetchedData: _prefetchedData,
+      addedColumns: addedColumns,
+    );
+  }
+
+  /// This method creates a copy of this manager state with a join added to the query.
+  ///
+  /// If the join already exists in the [joinBuilders], but has `useColumns: false`, we update the JoinBuilder.
+  TableManagerState<
+          $Database,
+          $Table,
+          $Dataclass,
+          $FilterComposer,
+          $OrderingComposer,
+          $ComputedFieldComposer,
+          $CreateCompanionCallback,
+          $UpdateCompanionCallback,
+          $DataclassWithReferences,
+          $ActiveDataclass,
+          $CreatePrefetchHooksCallback>
+      withJoin(
+          {required Table currentTable,
+          required Table referencedTable,
+          required GeneratedColumn currentColumn,
+          required GeneratedColumn referencedColumn}) {
+    final joinBuilder = JoinBuilder(
+        currentTable: currentTable,
+        referencedTable: referencedTable,
+        currentColumn: currentColumn,
+        referencedColumn: referencedColumn,
+        useColumns: true);
+    // If there is already a join builder for this table, we will replace it
+    // to ensure that we have `useColumns` set to true
+    final newJoinBuilders = joinBuilders
+        .whereNot((element) =>
+            element.currentColumn == currentColumn &&
+            element.referencedColumn == referencedColumn)
+        .toSet()
+      ..add(joinBuilder);
+    return TableManagerState(
+      db: db,
+      table: table,
+      createFilteringComposer: createFilteringComposer,
+      createOrderingComposer: createOrderingComposer,
+      createComputedFieldComposer: createComputedFieldComposer,
+      createCompanionCallback: _createCompanionCallback,
+      updateCompanionCallback: _updateCompanionCallback,
+      withReferenceMapper: _withReferenceMapper,
+      filter: filter,
+      joinBuilders: newJoinBuilders,
+      orderingBuilders: orderingBuilders,
+      distinct: distinct,
+      limit: limit,
+      offset: offset,
+      prefetchHooksCallback: _prefetchHooksCallback,
+      prefetchedData: _prefetchedData,
+      addedColumns: addedColumns,
+    );
+  }
+
   /// Helper for getting the table that's casted as a TableInfo
   /// This is needed due to dart's limitations with generics
-  TableInfo<T, DT> get _tableAsTableInfo => table as TableInfo<T, DT>;
+  TableInfo<$Table, $Dataclass> get _tableAsTableInfo =>
+      table as TableInfo<$Table, $Dataclass>;
 
   /// Builds a select statement with the given target columns, or all columns if none are provided
-  _StatementType<T, DT> _buildSelectStatement(
+  JoinedSelectStatement<$Table, $Dataclass> buildSelectStatement(
       {Iterable<Expression>? targetColumns}) {
     final joins = joinBuilders.map((e) => e.buildJoin()).toList();
 
-    // If there are no joins and we are returning all columns, we can use a simple select statement
-    if (joins.isEmpty && targetColumns == null) {
-      final simpleStatement =
-          db.select(_tableAsTableInfo, distinct: distinct ?? false);
-
-      // Apply the expression to the statement
-      if (filter != null) {
-        simpleStatement.where((_) => filter!);
-      }
-      // Apply orderings and limits
-
-      simpleStatement
-          .orderBy(orderingBuilders.map((e) => (_) => e.buildTerm()).toList());
-      if (limit != null) {
-        simpleStatement.limit(limit!, offset: offset);
-      }
-
-      return _SimpleResult(simpleStatement);
+    JoinedSelectStatement<$Table, $Dataclass> joinedStatement;
+    // If we are only selecting specific columns, we can use a selectOnly statement
+    if (targetColumns != null) {
+      joinedStatement =
+          (db.selectOnly(_tableAsTableInfo, distinct: distinct ?? false)
+            ..addColumns(targetColumns));
+      // Add the joins to the statement
+      joinedStatement = joinedStatement.join(joins)
+          as JoinedSelectStatement<$Table, $Dataclass>;
     } else {
-      JoinedSelectStatement<T, DT> joinedStatement;
-      // If we are only selecting specific columns, we can use a selectOnly statement
-      if (targetColumns != null) {
-        joinedStatement =
-            (db.selectOnly(_tableAsTableInfo, distinct: distinct ?? false)
-              ..addColumns(targetColumns));
-        // Add the joins to the statement
-        joinedStatement =
-            joinedStatement.join(joins) as JoinedSelectStatement<T, DT>;
-      } else {
-        joinedStatement = db
-            .select(_tableAsTableInfo, distinct: distinct ?? false)
-            .join(joins) as JoinedSelectStatement<T, DT>;
-      }
-      // Apply the expression to the statement
-      if (filter != null) {
-        joinedStatement.where(filter!);
-      }
-
-      // Apply orderings and limits
-      joinedStatement
-          .orderBy(orderingBuilders.map((e) => e.buildTerm()).toList());
-      if (limit != null) {
-        joinedStatement.limit(limit!, offset: offset);
-      }
-
-      return _JoinedResult(joinedStatement);
+      joinedStatement = db
+          .select(_tableAsTableInfo, distinct: distinct ?? false)
+          .join(joins) as JoinedSelectStatement<$Table, $Dataclass>;
     }
-  }
 
-  /// Build a select statement based on the manager state
-  Selectable<DT> buildSelectStatement() {
-    final result = _buildSelectStatement();
-    switch (result) {
-      case _SimpleResult():
-        return result.statement;
-      case _JoinedResult():
-        return result.statement.map((p0) => p0.readTable(_tableAsTableInfo));
+    // Add any additional columns/expression that were added
+    joinedStatement.addColumns(addedColumns);
+
+    // If there are any added column, then group by primary key and apply filter to it
+    // other wise add the filter to the select directly
+    if (addedColumns.isNotEmpty) {
+      // ignore: invalid_use_of_visible_for_overriding_member
+      joinedStatement.groupBy(table.primaryKey!, having: filter);
+    } else if (filter != null) {
+      joinedStatement.where(filter!);
     }
+
+    // Apply orderings and limits
+    joinedStatement
+        .orderBy(orderingBuilders.map((e) => e.buildTerm()).toList());
+    if (limit != null) {
+      joinedStatement.limit(limit!, offset: offset);
+    }
+
+    return joinedStatement;
   }
 
   /// Build an update statement based on the manager state
-  UpdateStatement<T, DT> buildUpdateStatement() {
-    final UpdateStatement<T, DT> updateStatement;
+  UpdateStatement<$Table, $Dataclass> buildUpdateStatement() {
+    final UpdateStatement<$Table, $Dataclass> updateStatement;
     if (joinBuilders.isEmpty) {
       updateStatement = db.update(_tableAsTableInfo);
       if (filter != null) {
@@ -221,9 +384,8 @@ class TableManagerState<
     } else {
       updateStatement = db.update(_tableAsTableInfo);
       for (var col in _tableAsTableInfo.primaryKey) {
-        final subquery =
-            _buildSelectStatement(targetColumns: [col]) as _JoinedResult<T, DT>;
-        updateStatement.where((tbl) => col.isInQuery(subquery.statement));
+        final subquery = buildSelectStatement(targetColumns: [col]);
+        updateStatement.where((tbl) => col.isInQuery(subquery));
       }
     }
     return updateStatement;
@@ -234,12 +396,9 @@ class TableManagerState<
     final countExpression = countAll();
     final JoinedSelectStatement statement;
     if (joinBuilders.isEmpty) {
-      statement = ((_buildSelectStatement(targetColumns: [countExpression])
-              as _JoinedResult)
-          .statement);
+      statement = buildSelectStatement(targetColumns: [countExpression]);
     } else {
-      final subquery = Subquery(
-          ((_buildSelectStatement() as _JoinedResult).statement), 'subquery');
+      final subquery = Subquery(buildSelectStatement(), 'subquery');
       statement = db.selectOnly(subquery)..addColumns([countExpression]);
     }
     return await statement
@@ -250,14 +409,7 @@ class TableManagerState<
 
   /// Check if any rows exists using the built statement
   Future<bool> exists() async {
-    final result = _buildSelectStatement();
-    final BaseSelectStatement statement;
-    switch (result) {
-      case _SimpleResult():
-        statement = result.statement;
-      case _JoinedResult():
-        statement = result.statement;
-    }
+    final BaseSelectStatement statement = buildSelectStatement();
     final query = existsQuery(statement);
     final existsStatement = db.selectOnly(_tableAsTableInfo)
       ..addColumns([query]);
@@ -280,9 +432,8 @@ class TableManagerState<
     } else {
       deleteStatement = db.delete(_tableAsTableInfo);
       for (var col in _tableAsTableInfo.primaryKey) {
-        final subquery =
-            _buildSelectStatement(targetColumns: [col]) as _JoinedResult<T, DT>;
-        deleteStatement.where((tbl) => col.isInQuery(subquery.statement));
+        final subquery = buildSelectStatement(targetColumns: [col]);
+        deleteStatement.where((tbl) => col.isInQuery(subquery));
       }
     }
     return deleteStatement;
@@ -290,57 +441,210 @@ class TableManagerState<
 }
 
 /// Base class for all table managers
-/// Most of this classes functionality is kept in a seperate [TableManagerState] class
+/// Most of this classes functionality is kept in a separate [TableManagerState] class
 /// This is so that the state can be passed down to lower level managers
+@immutable
 abstract class BaseTableManager<
-        DB extends GeneratedDatabase,
-        T extends Table,
-        DT,
-        FS extends FilterComposer<DB, T>,
-        OS extends OrderingComposer<DB, T>,
-        C extends ProcessedTableManager<DB, T, DT, FS, OS, C, CI, CU>,
-        CI extends Function,
-        CU extends Function>
-    implements
-        MultiSelectable<DT>,
-        SingleSelectable<DT>,
-        SingleOrNullSelectable<DT> {
+        $Database extends GeneratedDatabase,
+        $Table extends Table,
+        $Dataclass,
+        $FilterComposer extends Composer<$Database, $Table>,
+        $OrderingComposer extends Composer<$Database, $Table>,
+        $ComputedFieldComposer extends Composer<$Database, $Table>,
+        $CreateCompanionCallback extends Function,
+        $UpdateCompanionCallback extends Function,
+        $DataclassWithReferences,
+        $ActiveDataclass,
+        $CreatePrefetchHooksCallback extends Function>
+    extends Selectable<$ActiveDataclass> {
   /// The state for this manager
-  final TableManagerState<DB, T, DT, FS, OS, C, CI, CU> $state;
+  final TableManagerState<
+      $Database,
+      $Table,
+      $Dataclass,
+      $FilterComposer,
+      $OrderingComposer,
+      $ComputedFieldComposer,
+      $CreateCompanionCallback,
+      $UpdateCompanionCallback,
+      $DataclassWithReferences,
+      $ActiveDataclass,
+      $CreatePrefetchHooksCallback> $state;
 
   /// Create a new [BaseTableManager] instance
   ///
   /// {@macro manager_internal_use_only}
-  const BaseTableManager(this.$state);
+  BaseTableManager(this.$state);
+
+  /// This function with return a new manager which will return each item in the database with its references
+  ///
+  /// The references are returned as a prefiltered manager, which will only return the items which are related to the item
+  ///
+  /// For example:
+  /// ```dart
+  /// for (final (group,refs) in await groups.withReferences().get()) {
+  ///   final usersInGroup = await refs.users.get();
+  ///   /// Is identical to:
+  ///   final usersInGroup = await users.filter((f) => f.group.id(group.id)).get();
+  /// }
+  /// ```
+  /// ### Prefetching
+  ///
+  /// The keen among you may notice that the above code is extremely inefficient, as it will run a query for each group to get the users in that group.
+  /// This could mean hundreds of queries for a single page of data, grinding your application to a halt.
+  ///
+  /// The solution to this is to use prefetching, which will run a single query to get all the data you need.
+  ///
+  /// For example:
+  /// ```dart
+  /// for (final (group,refs) in await groups.withReferences((prefetch) => prefetch(users: true)).get()) {
+  ///   final usersInGroup = refs.users.prefetchedData;
+  /// }
+  /// ```
+  ///
+  /// Note that `prefetchedData` will be null if the reference was not prefetched.
+  ProcessedTableManager<
+          $Database,
+          $Table,
+          $Dataclass,
+          $FilterComposer,
+          $OrderingComposer,
+          $ComputedFieldComposer,
+          $CreateCompanionCallback,
+          $UpdateCompanionCallback,
+          $DataclassWithReferences,
+          $DataclassWithReferences,
+          $CreatePrefetchHooksCallback>
+      withReferences(
+          [final PrefetchHooks Function($CreatePrefetchHooksCallback prefetch)?
+              prefetch]) {
+    // Build the prefetch hooks based on the user's input
+    final prefetchHooks = ($state._prefetchHooksCallback != null)
+        ? prefetch?.call($state._prefetchHooksCallback!)
+        : null;
+
+    // Return a new manager which is configured to return a
+    // `$DataclassWithReferences` instead of a `$Dataclass`
+    return ProcessedTableManager($state
+        .copyWithActiveDataclass()
+        .copyWith(prefetchHooks: prefetchHooks));
+  }
+
+  /// Add computed fields to the statement which will be used to add additional columns to the query
+  /// These columns will be returned in the result set and can be used in filters/orderings
+  ///
+  /// {@macro computed_field_example}
+  ProcessedTableManager<
+          $Database,
+          $Table,
+          $Dataclass,
+          $FilterComposer,
+          $OrderingComposer,
+          $ComputedFieldComposer,
+          $CreateCompanionCallback,
+          $UpdateCompanionCallback,
+          $DataclassWithReferences,
+          $DataclassWithReferences,
+          $CreatePrefetchHooksCallback>
+      withFields(Iterable<BaseComputedField<Object, $Table>> computedFields) {
+    final joinBuilders =
+        computedFields.map((e) => e._joinBuilders).expand((e) => e).toSet();
+    final addedColumns = computedFields.map((e) => e._expression).toSet();
+    return ProcessedTableManager($state.copyWith(
+            addedColumns: $state.addedColumns.union(addedColumns),
+            joinBuilders: $state.joinBuilders.union(joinBuilders)))
+        .withReferences();
+  }
 
   /// Add a limit to the statement
-  C limit(int limit, {int? offset}) {
-    return $state
-        ._getChildManagerBuilder($state.copyWith(limit: limit, offset: offset));
+  ProcessedTableManager<
+      $Database,
+      $Table,
+      $Dataclass,
+      $FilterComposer,
+      $OrderingComposer,
+      $ComputedFieldComposer,
+      $CreateCompanionCallback,
+      $UpdateCompanionCallback,
+      $DataclassWithReferences,
+      $ActiveDataclass,
+      $CreatePrefetchHooksCallback> limit(int limit, {int? offset}) {
+    return ProcessedTableManager($state.copyWith(limit: limit, offset: offset));
   }
 
   /// Add ordering to the statement
-  C orderBy(ComposableOrdering Function(OS o) o) {
-    final orderings = o($state.orderingComposer);
-    return $state._getChildManagerBuilder($state.copyWith(
+  ProcessedTableManager<
+          $Database,
+          $Table,
+          $Dataclass,
+          $FilterComposer,
+          $OrderingComposer,
+          $ComputedFieldComposer,
+          $CreateCompanionCallback,
+          $UpdateCompanionCallback,
+          $DataclassWithReferences,
+          $ActiveDataclass,
+          $CreatePrefetchHooksCallback>
+      orderBy(ComposableOrdering Function($OrderingComposer o) o) {
+    final composer = $state.createOrderingComposer();
+
+    final orderings = o(composer);
+    return ProcessedTableManager($state.copyWith(
         orderingBuilders:
             $state.orderingBuilders.union(orderings.orderingBuilders),
-        joinBuilders: $state.joinBuilders.union(orderings.joinBuilders)));
+        joinBuilders:
+            $state.joinBuilders.union(composer.$joinBuilders.toSet())));
   }
 
   /// Add a filter to the statement
-  C filter(ComposableFilter Function(FS f) f) {
-    final filter = f($state.filteringComposer);
-    final combinedFilter = switch (($state.filter, filter.expression)) {
-      (null, null) => null,
-      (null, var filter) => filter,
-      (var filter, null) => filter,
-      (var filter1, var filter2) => (filter1!) & (filter2!)
-    };
+  ///
+  /// Any filters that were previously applied will be combined with an AND operator
+  ProcessedTableManager<
+      $Database,
+      $Table,
+      $Dataclass,
+      $FilterComposer,
+      $OrderingComposer,
+      $ComputedFieldComposer,
+      $CreateCompanionCallback,
+      $UpdateCompanionCallback,
+      $DataclassWithReferences,
+      $ActiveDataclass,
+      $CreatePrefetchHooksCallback> filter(
+    Expression<bool> Function($FilterComposer f) f,
+  ) {
+    return _filter(f, _BooleanOperator.and);
+  }
 
-    return $state._getChildManagerBuilder($state.copyWith(
+  /// Add a filter to the statement
+  ///
+  /// The [combineWith] parameter can be used to specify how the new filter should be combined with the existing filter
+  ProcessedTableManager<
+          $Database,
+          $Table,
+          $Dataclass,
+          $FilterComposer,
+          $OrderingComposer,
+          $ComputedFieldComposer,
+          $CreateCompanionCallback,
+          $UpdateCompanionCallback,
+          $DataclassWithReferences,
+          $ActiveDataclass,
+          $CreatePrefetchHooksCallback>
+      _filter(Expression<bool> Function($FilterComposer f) f,
+          _BooleanOperator combineWith) {
+    final composer = $state.createFilteringComposer();
+    final filter = f(composer);
+    final combinedFilter = switch (($state.filter, filter)) {
+      (null, var filter) => filter,
+      (var filter1, var filter2) => combineWith == _BooleanOperator.and
+          ? (filter1!) & (filter2)
+          : (filter1!) | (filter2)
+    };
+    return ProcessedTableManager($state.copyWith(
         filter: combinedFilter,
-        joinBuilders: $state.joinBuilders.union(filter.joinBuilders)));
+        joinBuilders:
+            $state.joinBuilders.union(composer.$joinBuilders.toSet())));
   }
 
   /// Writes all non-null fields from the entity into the columns of all rows
@@ -355,8 +659,9 @@ abstract class BaseTableManager<
   ///
   /// See also: [RootTableManager.replace], which does not require [filter] statements and
   /// supports setting fields back to null.
-  Future<int> update(Insertable<DT> Function(CU o) f) =>
-      $state.buildUpdateStatement().write(f($state._getUpdateCompanionBuilder));
+  Future<int> update(
+          Insertable<$Dataclass> Function($UpdateCompanionCallback o) f) =>
+      $state.buildUpdateStatement().write(f($state._updateCompanionCallback));
 
   /// Return the count of rows matched by the built statement
   /// When counting rows, the query will only count distinct rows by default
@@ -365,7 +670,9 @@ abstract class BaseTableManager<
   }
 
   /// Checks whether any rows exist
-  Future<bool> exists() => $state.exists();
+  Future<bool> exists() {
+    return $state.exists();
+  }
 
   /// Deletes all rows matched by built statement
   ///
@@ -387,10 +694,11 @@ abstract class BaseTableManager<
   /// See also: [getSingleOrNull], which returns `null` instead of
   /// throwing if the query completes with no rows.
   ///
-  /// Uses the distinct flag to ensure that only distinct rows are returned
+  /// The [distinct] parameter (enabled by default) controls whether to generate
+  /// a `SELECT DISTINCT` query, removing duplicates from the result.
   @override
-  Future<DT> getSingle() =>
-      $state.copyWith(distinct: true).buildSelectStatement().getSingle();
+  Future<$ActiveDataclass> getSingle({bool distinct = true}) async =>
+      (await get(distinct: distinct)).single;
 
   /// Creates an auto-updating stream of this statement, similar to
   /// [watch]. However, it is assumed that the query will only emit
@@ -398,35 +706,65 @@ abstract class BaseTableManager<
   /// `Stream<D>`. If, at any point, the query emits no or more than one rows,
   /// an error will be added to the stream instead.
   ///
-  /// Uses the distinct flag to ensure that only distinct rows are returned
+  /// The [distinct] parameter (enabled by default) controls whether to generate
+  /// a `SELECT DISTINCT` query, removing duplicates from the result.
   @override
-  Stream<DT> watchSingle() =>
-      $state.copyWith(distinct: true).buildSelectStatement().watchSingle();
+  Stream<$ActiveDataclass> watchSingle({bool distinct = true}) =>
+      watch(distinct: distinct).transform(singleElements());
 
   /// Executes the statement and returns all rows as a list.
   ///
   /// Use [limit] and [offset] to limit the number of rows returned
   /// An offset will only be applied if a limit is also set
-  /// Set [distinct] to true to ensure that only distinct rows are returned
+  ///
+  /// The [distinct] parameter (disabled by default) controls whether to generate
+  /// a `SELECT DISTINCT` query, removing duplicates from the result.
   @override
-  Future<List<DT>> get({bool distinct = false, int? limit, int? offset}) =>
-      $state
+  Future<List<$ActiveDataclass>> get(
+      {bool distinct = false, int? limit, int? offset}) async {
+    return $state.db.transaction(() async {
+      /// Fetch the items from the database with the prefetch hooks applied
+      var items = await $state.prefetchHooks
+          .withJoins($state)
           .copyWith(distinct: distinct, limit: limit, offset: offset)
           .buildSelectStatement()
           .get();
+
+      /// Apply the prefetch hooks to the items
+      items = await $state.prefetchHooks.addPrefetchedData(items);
+      return $state.toActiveDataclass(items);
+    });
+  }
 
   /// Creates an auto-updating stream of the result that emits new items
   /// whenever any table used in this statement changes.
   ///
   /// Use [limit] and [offset] to limit the number of rows returned
   /// An offset will only be applied if a limit is also set
-  /// Set [distinct] to true to ensure that only distinct rows are returned
+  ///
+  /// The [distinct] parameter (disabled by default) controls whether to generate
+  /// a `SELECT DISTINCT` query, removing duplicates from the result.
   @override
-  Stream<List<DT>> watch({bool distinct = false, int? limit, int? offset}) =>
-      $state
-          .copyWith(distinct: distinct, limit: limit, offset: offset)
-          .buildSelectStatement()
-          .watch();
+  Stream<List<$ActiveDataclass>> watch(
+      {bool distinct = false, int? limit, int? offset}) {
+    /// Build a select statement so we can extract the tables that should be watched
+    var baseSelect = $state.prefetchHooks
+        .withJoins($state)
+        .copyWith(distinct: distinct, limit: limit, offset: offset)
+        .buildSelectStatement();
+    final context = GenerationContext.fromDb($state.db);
+    baseSelect.writeInto(context);
+
+    return $state.db.createStream(QueryStreamFetcher(
+      readsFrom: TableUpdateQuery.onAllTables([
+        ...context.watchedTables,
+        ...$state.prefetchHooks.explicitlyWatchedTables
+      ]),
+      fetchData: () async {
+        return get(distinct: distinct, limit: limit, offset: offset);
+      },
+    ));
+  }
 
   /// Executes this statement, like [get], but only returns one
   /// value. If the result too many values, this method will throw. If no
@@ -435,10 +773,17 @@ abstract class BaseTableManager<
   /// See also: [getSingle], which can be used if the query will
   /// always evaluate to exactly one row.
   ///
-  /// Uses the distinct flag to ensure that only distinct rows are returned
+  /// The [distinct] parameter (enabled by default) controls whether to generate
+  /// a `SELECT DISTINCT` query, removing duplicates from the result.
   @override
-  Future<DT?> getSingleOrNull() =>
-      $state.copyWith(distinct: true).buildSelectStatement().getSingleOrNull();
+  Future<$ActiveDataclass?> getSingleOrNull({bool distinct = true}) async {
+    final list = await get(distinct: distinct);
+    if (list.isEmpty) {
+      return null;
+    } else {
+      return list.single;
+    }
+  }
 
   /// Creates an auto-updating stream of this statement, similar to
   /// [watch]. However, it is assumed that the query will only
@@ -448,52 +793,103 @@ abstract class BaseTableManager<
   /// If the query emits zero rows at some point, `null` will be added
   /// to the stream instead.
   ///
-  /// Uses the distinct flag to ensure that only distinct rows are returned
+  /// The [distinct] parameter (enabled by default) controls whether to generate
+  /// a `SELECT DISTINCT` query, removing duplicates from the result.
   @override
-  Stream<DT?> watchSingleOrNull() => $state
-      .copyWith(distinct: true)
-      .buildSelectStatement()
-      .watchSingleOrNull();
+  Stream<$ActiveDataclass?> watchSingleOrNull({bool distinct = true}) =>
+      watch(distinct: distinct).transform(singleElementsOrNull());
 }
 
-/// A table manager that exposes methods to a table manager that already has filters/orderings/limit applied
-//  As of now this is identical to [BaseTableManager] but it's kept seperate for future extensibility
+/// A table manager that exposes methods to a table manager that already has
+/// filters/orderings/limit applied.
+///
+/// Some methods, like [RootTableManager.create] are intentionally not present
+/// on [ProcessedTableManager] because combining e.g. [BaseTableManager.filter]
+/// with [RootTableManager.create] makes little sense - there is no `WHERE`
+/// clause on inserts.
+/// By introducing a separate interface for managers with filters applied to
+/// them, the API doesn't allow combining incompatible clauses and operations.
+///
+// As of now this is identical to [BaseTableManager] but it's kept separate for
+// future extensibility.
+///
+/// {@macro manager_internal_use_only}
+@immutable
 class ProcessedTableManager<
-        DB extends GeneratedDatabase,
-        T extends Table,
-        D,
-        FS extends FilterComposer<DB, T>,
-        OS extends OrderingComposer<DB, T>,
-        C extends ProcessedTableManager<DB, T, D, FS, OS, C, CI, CU>,
-        CI extends Function,
-        CU extends Function>
-    extends BaseTableManager<DB, T, D, FS, OS, C, CI, CU>
-    implements
-        MultiSelectable<D>,
-        SingleSelectable<D>,
-        SingleOrNullSelectable<D> {
+        $Database extends GeneratedDatabase,
+        $Table extends Table,
+        $Dataclass,
+        $FilterComposer extends Composer<$Database, $Table>,
+        $OrderingComposer extends Composer<$Database, $Table>,
+        $ComputedFieldComposer extends Composer<$Database, $Table>,
+        $CreateCompanionCallback extends Function,
+        $UpdateCompanionCallback extends Function,
+        $DataclassWithReferences,
+        $ActiveDataclass,
+        $CreatePrefetchHooksCallback extends Function>
+    extends BaseTableManager<
+        $Database,
+        $Table,
+        $Dataclass,
+        $FilterComposer,
+        $OrderingComposer,
+        $ComputedFieldComposer,
+        $CreateCompanionCallback,
+        $UpdateCompanionCallback,
+        $DataclassWithReferences,
+        $ActiveDataclass,
+        $CreatePrefetchHooksCallback> {
   /// Create a new [ProcessedTableManager] instance
-  @internal
-  const ProcessedTableManager(super.$state);
+  ///
+  /// {@macro manager_internal_use_only}
+  ProcessedTableManager(super.$state);
+
+  /// Prefetched data, if references with prefetching enabled were added to this manager
+  ///
+  /// E.G.
+  /// ```dart
+  /// final (group,refs) = await groups.withReferences((prefetch) => prefetch(users: true)).getSingle();
+  /// final users = refs.users.prefetchedData;
+  /// /// For references which were not prefetched, this field will be null
+  /// final users = refs.admin.prefetchedData; // Returns null
+  /// ```
+  List<$ActiveDataclass>? get prefetchedData => $state.prefetchedData;
 }
 
-/// A table manager with top level function for creating, reading, updating, and deleting items
+/// A table manager with top level function for creating, reading, updating, and
+/// deleting items.
+@immutable
 abstract class RootTableManager<
-    DB extends GeneratedDatabase,
-    T extends Table,
-    D,
-    FS extends FilterComposer<DB, T>,
-    OS extends OrderingComposer<DB, T>,
-    C extends ProcessedTableManager<DB, T, D, FS, OS, C, CI, CU>,
-    CI extends Function,
-    CU extends Function> extends BaseTableManager<DB, T, D, FS, OS, C, CI, CU> {
+        $Database extends GeneratedDatabase,
+        $Table extends Table,
+        $Dataclass,
+        $FilterComposer extends Composer<$Database, $Table>,
+        $OrderingComposer extends Composer<$Database, $Table>,
+        $ComputedFieldComposer extends Composer<$Database, $Table>,
+        $CreateCompanionCallback extends Function,
+        $UpdateCompanionCallback extends Function,
+        $DataclassWithReferences,
+        $ActiveDataclass,
+        $CreatePrefetchHooksCallback extends Function>
+    extends BaseTableManager<
+        $Database,
+        $Table,
+        $Dataclass,
+        $FilterComposer,
+        $OrderingComposer,
+        $ComputedFieldComposer,
+        $CreateCompanionCallback,
+        $UpdateCompanionCallback,
+        $DataclassWithReferences,
+        $ActiveDataclass,
+        $CreatePrefetchHooksCallback> {
   /// Create a new [RootTableManager] instance
   ///
   /// {@template manager_internal_use_only}
   /// This class is implemented by the code generator and should
   /// not be instantiated or extended manually.
   /// {@endtemplate}
-  const RootTableManager(super.$state);
+  RootTableManager(super.$state);
 
   /// Creates a new row in the table using the given function
   ///
@@ -516,10 +912,12 @@ abstract class RootTableManager<
   ///
   /// If the table doesn't have a `rowid`, you can't rely on the return value.
   /// Still, the future will always complete with an error if the insert fails.
-  Future<int> create(Insertable<D> Function(CI o) f,
-      {InsertMode? mode, UpsertClause<T, D>? onConflict}) {
+  Future<int> create(
+      Insertable<$Dataclass> Function($CreateCompanionCallback o) f,
+      {InsertMode? mode,
+      UpsertClause<$Table, $Dataclass>? onConflict}) {
     return $state.db.into($state._tableAsTableInfo).insert(
-        f($state._getInsertCompanionBuilder),
+        f($state._createCompanionCallback),
         mode: mode,
         onConflict: onConflict);
   }
@@ -532,10 +930,12 @@ abstract class RootTableManager<
   /// exception in that case. Use [createReturningOrNull] when performing an
   /// insert with an insert mode like [InsertMode.insertOrIgnore] or when using
   /// a [DoUpdate] with a `where` clause clause.
-  Future<D> createReturning(Insertable<D> Function(CI o) f,
-      {InsertMode? mode, UpsertClause<T, D>? onConflict}) {
+  Future<$Dataclass> createReturning(
+      Insertable<$Dataclass> Function($CreateCompanionCallback o) f,
+      {InsertMode? mode,
+      UpsertClause<$Table, $Dataclass>? onConflict}) {
     return $state.db.into($state._tableAsTableInfo).insertReturning(
-        f($state._getInsertCompanionBuilder),
+        f($state._createCompanionCallback),
         mode: mode,
         onConflict: onConflict);
   }
@@ -545,10 +945,12 @@ abstract class RootTableManager<
   /// When no row was inserted and no exception was thrown, for instance because
   /// [InsertMode.insertOrIgnore] was used or because the upsert clause had a
   /// `where` clause that didn't match, `null` is returned instead.
-  Future<D?> createReturningOrNull(Insertable<D> Function(CI o) f,
-      {InsertMode? mode, UpsertClause<T, D>? onConflict}) {
+  Future<$Dataclass?> createReturningOrNull(
+      Insertable<$Dataclass> Function($CreateCompanionCallback o) f,
+      {InsertMode? mode,
+      UpsertClause<$Table, $Dataclass>? onConflict}) {
     return $state.db.into($state._tableAsTableInfo).insertReturningOrNull(
-        f($state._getInsertCompanionBuilder),
+        f($state._createCompanionCallback),
         mode: mode,
         onConflict: onConflict);
   }
@@ -565,10 +967,12 @@ abstract class RootTableManager<
   /// checks.
   /// [onConflict] can be used to create an upsert clause for engines that
   /// support it. For details and examples, see [InsertStatement.insert].
-  Future<void> bulkCreate(Iterable<Insertable<D>> Function(CI o) f,
-      {InsertMode? mode, UpsertClause<T, D>? onConflict}) {
+  Future<void> bulkCreate(
+      Iterable<Insertable<$Dataclass>> Function($CreateCompanionCallback o) f,
+      {InsertMode? mode,
+      UpsertClause<$Table, $Dataclass>? onConflict}) {
     return $state.db.batch((b) => b.insertAll(
-        $state._tableAsTableInfo, f($state._getInsertCompanionBuilder),
+        $state._tableAsTableInfo, f($state._createCompanionCallback),
         mode: mode, onConflict: onConflict));
   }
 
@@ -584,7 +988,7 @@ abstract class RootTableManager<
   /// ignores such fields without changing them in the database.
   ///
   /// Returns true if a row was affected by this operation.
-  Future<bool> replace(Insertable<D> entity) {
+  Future<bool> replace(Insertable<$Dataclass> entity) {
     return $state.db.update($state._tableAsTableInfo).replace(entity);
   }
 
@@ -595,8 +999,59 @@ abstract class RootTableManager<
   /// the field exists, that default value will be used. Otherwise, the field
   /// will be reset to null. This behavior is different to [update], which simply
   /// ignores such fields without changing them in the database.
-  Future<void> bulkReplace(Iterable<Insertable<D>> entities) {
+  Future<void> bulkReplace(Iterable<Insertable<$Dataclass>> entities) {
     return $state.db
         .batch((b) => b.replaceAll($state._tableAsTableInfo, entities));
+  }
+
+  /// Create an computed field for adding additional columns to the query
+  ///
+  /// The `computed field` and `computed fieldWithConverter` methods allow you to create computed fields that add additional columns to a query. These columns are computed directly by the database. This approach has significant performance benefits compared to querying all the data and performing the calculations yourself in your Dart code.
+  ///
+  /// ### Example
+  ///
+  /// Consider the following example where we use the `computed field` method to filter users who are in an admin group and to aggregate the number of users in each group:
+  /// {@template computed_field_example}
+  /// ```dart
+  /// /// Filter users who are in an admin group
+  /// final inAdminGroup = db.managers.users.computed field((a) => a.group.isAdmin);
+  /// final users = db.managers.users.withComputedFields([inAdminGroup]).filter(inAdminGroup.filter(true)).get();
+  ///
+  /// /// Aggregate the number of users in each group
+  /// final userCount = db.managers.group.computed field((a) => a.users((a) => a.id.count()));
+  /// final groups = db.managers.group.withComputedFields([userCount]).get();
+  /// for (final (group, refs) in groups) {
+  ///   final count = userCount.read(refs);
+  /// }
+  /// ```
+  /// In this example:
+  /// - The `inAdminGroup` computed field filters users directly in the database, ensuring that only users in the admin group are retrieved.
+  /// - The `userCount` computed field aggregates the number of users in each group within the database, providing the count directly without needing to load all user data into your application.
+  /// {@endtemplate}
+  ///
+  /// By leveraging these database calculations, you can achieve faster query performance and more efficient resource usage in your application.
+  ///
+  /// See also: [computed fieldWithConverter] for computed fields on columns with type converters
+  ComputedField<T, $Table> computedField<T extends Object>(
+    Expression<T> Function($ComputedFieldComposer a) a,
+  ) {
+    final composer = $state.createComputedFieldComposer();
+    final expression = a(composer);
+    return ComputedField(expression, composer.$joinBuilders.toSet());
+  }
+
+  /// Create an [computed field] with type converter support
+  ///
+  /// See the documentation for [computed field] for more information
+  ComputedFieldWithConverter<DartType, SqlType, $Table>
+      computedfieldWithConverter<DartType, SqlType extends Object>(
+    GeneratedColumnWithTypeConverter<DartType, SqlType> Function(
+            $ComputedFieldComposer a)
+        a,
+  ) {
+    final composer = $state.createComputedFieldComposer();
+    final expression = a(composer);
+    return ComputedFieldWithConverter(
+        expression, composer.$joinBuilders.toSet());
   }
 }

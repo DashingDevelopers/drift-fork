@@ -1,7 +1,9 @@
+import 'package:build_test/build_test.dart';
 import 'package:drift/drift.dart' show DriftSqlType;
 import 'package:drift_dev/src/analysis/results/results.dart';
 import 'package:test/test.dart';
 
+import '../../../utils.dart';
 import '../../test_utils.dart';
 
 void main() {
@@ -110,5 +112,108 @@ abstract class TodoItemWithCategoryNameView extends View {
             .having((e) => e.nameInDart, 'nameInDart', 'title')
             .having((e) => e.sqlType.builtin, 'sqlType', DriftSqlType.string)
             .having((e) => e.nullable, 'nullable', isTrue));
+  });
+
+  test('generates unique column names for conflicts', () async {
+    final backend = await TestBackend.inTest({
+      'a|lib/main.dart': '''
+import 'package:drift/drift.dart';
+
+class MyTable extends Table {
+  IntColumn get id => integer()();
+}
+
+class MyView extends View {
+  MyTable get a;
+  MyTable get b;
+  MyTable get c;
+
+  @override
+  Query as() => select([
+    a.id,
+    b.id,
+    c.id,
+  ]).from(a).join([
+    innerJoin(b, b.id.equalsExp(a.id)),
+    innerJoin(c, c.id.equalsExp(a.id)),
+  ]);
+}
+
+@DriftDatabase(tables: [MyTable], views: [MyView])
+class Database {}
+''',
+    });
+
+    final file = await backend.analyze('package:a/main.dart');
+    backend.expectNoErrors();
+
+    final view = file.analyzedElements.whereType<DriftView>().single;
+    expect(view.columns.map((e) => e.nameInDart), ['id', 'id1', 'id2']);
+    expect(view.columns.map((e) => e.nameInSql), ['id', 'id1', 'id2']);
+  });
+
+  test('can use groupBy without join', () async {
+    final result = await emulateDriftBuild(
+      inputs: {
+        'a|lib/a.dart': '''
+import 'package:drift/drift.dart';
+
+abstract class Users extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text()();
+}
+
+abstract class CommonNames extends View {
+  Users get users;
+
+  Expression<int> get amount => users.id.count();
+
+  @override
+  Query as() => select([amount]).from(users)
+    ..groupBy([users.id], having: users.id.isBiggerThanValue(10));
+}
+''',
+      },
+      modularBuild: true,
+      logger: loggerThat(neverEmits(anything)),
+    );
+
+    checkOutputs({
+      'a|lib/a.drift.dart': decodedMatches(contains(r'''
+  @override
+  i0.Query? get query =>
+      (attachedDatabase.selectOnly(users)..addColumns($columns))
+        ..groupBy([users.id],
+            having: i3.ComparableExpr(users.id).isBiggerThanValue(10));
+'''))
+    }, result.dartOutputs, result.writer);
+  });
+
+  test('can use views referencing same table multiple times', () async {
+    await emulateDriftBuild(
+      inputs: {
+        'a|lib/a.dart': '''
+import 'package:drift/drift.dart';
+
+class Users extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text()();
+}
+
+class UsersView extends View {
+  Users get a;
+  Users get b;
+
+  @override
+  Query as() => select([a.id, b.name])
+      .from(a)
+      .join([
+        innerJoin(b, b.name.equalsExp(a.id))
+      ]);
+}
+''',
+      },
+      logger: loggerThat(neverEmits(anything)),
+    );
   });
 }

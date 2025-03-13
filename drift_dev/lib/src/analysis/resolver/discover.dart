@@ -1,6 +1,7 @@
 import 'package:analyzer/dart/ast/ast.dart' as dart;
 import 'package:analyzer/dart/constant/value.dart';
 import 'package:analyzer/dart/element/element.dart';
+import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/dart/element/visitor.dart';
 import 'package:drift/drift.dart' show TableIndex;
 import 'package:source_gen/source_gen.dart';
@@ -174,12 +175,20 @@ class _FindDartElements extends RecursiveElementVisitor<void> {
 
   _FindDartElements(
       this._discoverStep, this._library, KnownDriftTypes knownTypes)
-      : _isTable = TypeChecker.fromStatic(knownTypes.tableType),
-        _isTableIndex = TypeChecker.fromStatic(knownTypes.tableIndexType),
-        _isView = TypeChecker.fromStatic(knownTypes.viewType),
-        _isTableInfo = TypeChecker.fromStatic(knownTypes.tableInfoType),
-        _isDatabase = TypeChecker.fromStatic(knownTypes.driftDatabase),
-        _isDao = TypeChecker.fromStatic(knownTypes.driftAccessor);
+      : _isTable = _checker(knownTypes.tableType),
+        _isTableIndex = _checker(knownTypes.tableIndexType),
+        _isView = _checker(knownTypes.viewType),
+        _isTableInfo = _checker(knownTypes.tableInfoType),
+        _isDatabase = _checker(knownTypes.driftDatabase),
+        _isDao = _checker(knownTypes.driftAccessor);
+
+  static TypeChecker _checker(InterfaceType type) {
+    // Workaround for https://github.com/dart-lang/build/issues/3796, the
+    // analysis sessions for _knownTypes and this type might be different.
+    final definition = type.element.librarySource;
+    return TypeChecker.fromUrl(
+        definition.uri.replace(fragment: type.element.name));
+  }
 
   Future<void> find() async {
     visitLibraryElement(_library);
@@ -284,9 +293,20 @@ class _FindDartElements extends RecursiveElementVisitor<void> {
       if (computed != null &&
           type != null &&
           _isTableIndex.isExactlyType(type)) {
+        final sql = computed.getField('createIndexStatement')?.toStringValue();
+        String? indexName;
+        if (sql != null) {
+          final engine = _discoverStep._driver.newSqlEngine();
+          final result = engine.parse(sql);
+          if (result.rootNode case CreateIndexStatement stmt) {
+            indexName = stmt.createdName;
+          }
+        }
+
         yield (
           annotation,
-          _discoverStep._id(computed.getField('name')?.toStringValue() ?? '')
+          _discoverStep._id(
+              indexName ?? computed.getField('name')?.toStringValue() ?? '')
         );
       }
     }
@@ -315,8 +335,10 @@ class _FindDartElements extends RecursiveElementVisitor<void> {
   Future<String> _sqlNameOfTable(ClassElement table) async {
     final defaultName = _defaultNameForTableOrView(table);
 
-    final tableNameGetter =
-        table.augmented.lookUpGetter(name: 'tableName', library: _library);
+    final tableNameGetter = table.augmented.lookUpGetter(
+      name: 'tableName',
+      library: _library,
+    );
     if (tableNameGetter == null ||
         tableNameGetter.isFromDefaultTable ||
         tableNameGetter.isAbstract) {

@@ -1,7 +1,8 @@
-## 1.3.0-dev
+## 1.3.0
 
 - Add support for array types supported by the `postgres` package: booleans,
   integers, strings, floats and jsonb values.
+- Add bindings to the postgres `now()` function.
 
 ## 1.2.3
 

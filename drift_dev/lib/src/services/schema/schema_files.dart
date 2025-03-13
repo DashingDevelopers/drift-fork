@@ -1,16 +1,22 @@
+import 'dart:io';
+
 import 'package:collection/collection.dart';
 import 'package:drift/drift.dart' show DriftSqlType, SqlDialect, UpdateKind;
+import 'package:drift_dev/src/analysis/resolver/drift/sqlparser/mapping.dart';
+import 'package:logging/logging.dart';
 import 'package:pub_semver/pub_semver.dart';
 import 'package:recase/recase.dart';
 import 'package:sqlparser/sqlparser.dart' hide PrimaryKeyColumn;
 
+import '../../analysis/options.dart';
 import '../../analysis/resolver/shared/data_class.dart';
 import '../../analysis/results/results.dart';
-import '../../analysis/options.dart';
 import '../../writer/utils/column_constraints.dart';
+import 'schema_isolate.dart';
 
 class _ExportedSchemaVersion {
-  static final Version current = Version(1, 1, 0);
+  static final Version current = _supportDialectSpecificConstraints;
+  static final Version _supportDialectSpecificConstraints = Version(1, 2, 0);
   static final Version _supportDartIndex = Version(1, 1, 0);
 
   final Version version;
@@ -20,7 +26,7 @@ class _ExportedSchemaVersion {
   bool get supportsDartIndex => version >= _supportDartIndex;
 }
 
-/// Utilities to transform moor schema entities to json.
+/// Utilities to transform drift schema entities to json.
 class SchemaWriter {
   final DriftOptions options;
   final List<DriftElement> elements;
@@ -34,7 +40,61 @@ class SchemaWriter {
     return _entityIds.putIfAbsent(entity, () => _maxId++);
   }
 
-  Map<String, dynamic> createSchemaJson() {
+  /// Exports analyzed drift elements into a serialized format that can be used
+  /// to re-construct the current database schema later.
+  ///
+  /// Some drift elements, in particular Dart-defined views, are partially
+  /// defined at runtime and require running code. To infer the schema of these
+  /// elements, this method runs drift's code generator and spawns up a short-
+  /// lived isolate to collect the actual `CREATE` statements generated at
+  /// runtime.
+  Future<Map<String, Object?>> createSchemaJson({File? dumpStartupCode}) async {
+    final requiresRuntimeInformation = <DriftSchemaElement>[];
+    for (final element in elements) {
+      switch (element) {
+        case DriftTable():
+          for (final column in element.columns) {
+            if (column.sqlType is ColumnCustomType) {
+              requiresRuntimeInformation.add(element);
+              continue;
+            }
+
+            if (column.defaultArgument != null) {
+              // This is an arbitrary Dart expression allowed to contain user
+              // code. To make sure the schema file stays valid, evaluate it
+              // once now and replace the expression with the result as a
+              // constant when serializing.
+              requiresRuntimeInformation.add(element);
+              continue;
+            }
+          }
+        case DriftView():
+          if (element.source is! SqlViewSource) {
+            requiresRuntimeInformation.add(element);
+          }
+      }
+    }
+
+    final knownStatements = <String, List<(SqlDialect, String)>>{};
+    if (requiresRuntimeInformation.isNotEmpty) {
+      try {
+        final statements = await SchemaIsolate.collectStatements(
+          options: options,
+          allElements: elements,
+          elementFilter: requiresRuntimeInformation,
+          dumpStartupCode: dumpStartupCode,
+        );
+
+        for (final statement in statements) {
+          knownStatements
+              .putIfAbsent(statement.elementName, () => [])
+              .add((statement.dialect, statement.createStatement));
+        }
+      } on SchemaIsolateException catch (e) {
+        _logger.warning(e.description(isFatal: false));
+      }
+    }
+
     return {
       '_meta': {
         'description': 'This file contains a serialized version of schema '
@@ -42,11 +102,14 @@ class SchemaWriter {
         'version': _ExportedSchemaVersion.current.toString(),
       },
       'options': _serializeOptions(),
-      'entities': elements.map(_entityToJson).whereType<Map>().toList(),
+      'entities': elements
+          .map((e) => _entityToJson(e, knownStatements))
+          .whereType<Map>()
+          .toList(),
     };
   }
 
-  Map _serializeOptions() {
+  Map<String, Object?> _serializeOptions() {
     const relevantKeys = {'store_date_time_values_as_text'};
     final asJson = options.toJson()
       ..removeWhere((key, _) => !relevantKeys.contains(key));
@@ -54,13 +117,32 @@ class SchemaWriter {
     return asJson;
   }
 
-  Map? _entityToJson(DriftElement entity) {
+  Map<String, Object?>? _entityToJson(DriftElement entity,
+      Map<String, List<(SqlDialect, String)>> knownStatements) {
     String? type;
-    Map? data;
+    Map<String, Object?>? data;
 
     if (entity is DriftTable) {
       type = 'table';
-      data = _tableData(entity);
+
+      // For some table definitions, we need to augment the static analysis
+      // results with runtime-evaluated results to get a sound schema. This is
+      // relevant when using defaults with Dart expressions or custom types. We
+      // shouldn't emit the underlying Dart code because it might evaluate to
+      // a different thing when dependencies are changed, while we want an
+      // immutable schema snapshot.
+      CreateTableStatement? actualTable;
+      if (knownStatements[entity.schemaName] case final known?) {
+        final sql = known.firstWhere((e) => e.$1 == SqlDialect.sqlite).$2;
+        final engine = SqlEngine(EngineOptions(version: SqliteVersion.current));
+
+        final result = engine.parse(sql);
+        if (result.rootNode case final CreateTableStatement create) {
+          actualTable = create;
+        }
+      }
+
+      data = _tableData(entity, actualTable);
     } else if (entity is DriftTrigger) {
       type = 'trigger';
       data = {
@@ -84,19 +166,28 @@ class SchemaWriter {
         ],
       };
     } else if (entity is DriftView) {
-      final source = entity.source;
-      if (source is! SqlViewSource) {
-        throw UnsupportedError(
-            'Exporting Dart-defined views into a schema is not '
-            'currently supported');
+      String? sql;
+      if (knownStatements[entity.schemaName] case final known?) {
+        sql = known.firstWhere((e) => e.$1 == SqlDialect.sqlite).$2;
+      } else {
+        final source = entity.source;
+        if (source is! SqlViewSource) {
+          throw UnsupportedError(
+              'Exporting Dart-defined views into a schema is not '
+              'currently supported');
+        }
+
+        sql = source.sqlCreateViewStmt;
       }
 
       type = 'view';
       data = {
         'name': entity.schemaName,
-        'sql': source.sqlCreateViewStmt,
+        'sql': sql,
         'dart_info_name': entity.entityInfoName,
-        'columns': [for (final column in entity.columns) _columnData(column)],
+        'columns': [
+          for (final column in entity.columns) _columnData(column, null)
+        ],
       };
     } else if (entity is DefinedSqlQuery) {
       if (entity.mode == QueryMode.atCreate) {
@@ -123,7 +214,8 @@ class SchemaWriter {
     };
   }
 
-  Map _tableData(DriftTable table) {
+  Map<String, Object?> _tableData(
+      DriftTable table, CreateTableStatement? create) {
     final primaryKeyFromTableConstraint =
         table.tableConstraints.whereType<PrimaryKeyColumns>().firstOrNull;
     final uniqueKeys = table.tableConstraints.whereType<UniqueColumns>();
@@ -131,7 +223,10 @@ class SchemaWriter {
     return {
       'name': table.schemaName,
       'was_declared_in_moor': table.declaration.isDriftDeclaration,
-      'columns': [for (final column in table.columns) _columnData(column)],
+      'columns': [
+        for (final column in table.columns)
+          _columnData(column, create?.column(column.nameInSql))
+      ],
       'is_virtual': table.isVirtual,
       if (table.isVirtual)
         'create_virtual_stmt': 'CREATE VIRTUAL TABLE "${table.schemaName}" '
@@ -152,20 +247,50 @@ class SchemaWriter {
     };
   }
 
-  Map _columnData(DriftColumn column) {
+  Map<String, Object?> _columnData(
+      DriftColumn column, ColumnDefinition? resolved) {
     final constraints = defaultConstraints(column);
+    final dialectSpecific = {
+      for (final dialect in options.supportedDialects)
+        if (constraints[dialect] case final specific?)
+          if (specific.isNotEmpty) dialect: specific,
+    };
+
+    final sqlType = column.sqlType;
+    var type = column.sqlType.builtin;
+    if (resolved != null && sqlType is ColumnCustomType) {
+      final sqlType =
+          const SchemaFromCreateTable().resolveColumnType(resolved.typeName);
+      type =
+          TypeMapping.toDefaultType(sqlType, options.storeDateTimeValuesAsText);
+    }
+    var defaultCode = column.defaultArgument;
+    if (defaultCode != null && resolved != null) {
+      // Try to replace the expression computing the default in Dart with the
+      // actual value.
+      for (final constraint in resolved.constraints) {
+        if (constraint case final Default def) {
+          defaultCode = DriftColumn.defaultFromParser(def);
+          break;
+        }
+      }
+    }
 
     return {
       'name': column.nameInSql,
       'getter_name': column.nameInDart,
-      'moor_type': column.sqlType.builtin.toSerializedString(),
+      'moor_type': type.toSerializedString(),
       'nullable': column.nullable,
       'customConstraints': column.customConstraints,
       if (constraints[SqlDialect.sqlite]!.isNotEmpty &&
           column.customConstraints == null)
-        // TODO: Dialect-specific constraints in schema file
         'defaultConstraints': constraints[SqlDialect.sqlite]!,
-      'default_dart': column.defaultArgument?.toString(),
+      if (column.customConstraints == null && dialectSpecific.isNotEmpty)
+        'dialectAwareDefaultConstraints': {
+          for (final MapEntry(:key, :value) in dialectSpecific.entries)
+            key.name: value,
+        },
+      'default_dart': defaultCode?.toString(),
       'default_client_dart': column.clientDefaultCode?.toString(),
       'dsl_features': [...column.constraints.map(_dslFeatureData)],
       if (column.typeConverter != null)
@@ -180,15 +305,19 @@ class SchemaWriter {
     if (feature is PrimaryKeyColumn) {
       return feature.isAutoIncrement ? 'auto-increment' : 'primary-key';
     } else if (feature is LimitingTextLength) {
-      return {
+      return <String, Object?>{
         'allowed-lengths': {
           'min': feature.minLength,
           'max': feature.maxLength,
         },
       };
+    } else if (feature is DartCheckExpression) {
+      return <String, Object?>{'check': feature.toJson()};
     }
     return 'unknown';
   }
+
+  static final _logger = Logger('drift_dev.SchemaWriter');
 }
 
 /// Reads files generated by [SchemaWriter].
@@ -334,7 +463,7 @@ class SchemaReader {
   }
 
   DriftTrigger _readTrigger(Map<String, dynamic> content) {
-    final on = _existingEntity<DriftTable>(content['on']);
+    final on = _existingEntity<DriftElementWithResultSet>(content['on']);
     final name = content['name'] as String;
     final sql = content['sql'] as String;
 
@@ -446,6 +575,8 @@ class SchemaReader {
     );
   }
 
+  static final _dialectByName = SqlDialect.values.asNameMap();
+
   DriftColumn _readColumn(Map<String, dynamic> data) {
     final name = data['name'] as String;
     final columnType =
@@ -453,10 +584,19 @@ class SchemaReader {
     final nullable = data['nullable'] as bool;
     final customConstraints = data['customConstraints'] as String?;
     final defaultConstraints = data['defaultConstraints'] as String?;
+    final dialectAwareConstraints =
+        data['dialectAwareDefaultConstraints'] as Map<String, Object?>?;
+
     final dslFeatures = <DriftColumnConstraint?>[
       for (final feature in data['dsl_features'] as List<dynamic>)
         _columnFeature(feature),
-      if (defaultConstraints != null)
+      if (dialectAwareConstraints != null)
+        DefaultConstraintsFromSchemaFile(null, dialectSpecific: {
+          for (final MapEntry(:key, :value)
+              in dialectAwareConstraints.cast<String, String>().entries)
+            if (_dialectByName[key] case final dialect?) dialect: value,
+        })
+      else if (defaultConstraints != null)
         DefaultConstraintsFromSchemaFile(defaultConstraints),
     ].whereType<DriftColumnConstraint>().toList();
     final getterName = data['getter_name'] as String?;
@@ -470,8 +610,9 @@ class SchemaReader {
       nullable: nullable,
       nameInSql: name,
       nameInDart: getterName ?? ReCase(name).camelCase,
-      defaultArgument:
-          defaultDart != null ? AnnotatedDartCode([defaultDart]) : null,
+      defaultArgument: defaultDart != null
+          ? AnnotatedDartCode([DartLexeme(defaultDart)])
+          : null,
       declaration: _declaration,
       customConstraints: customConstraints,
       constraints: dslFeatures,
@@ -483,11 +624,17 @@ class SchemaReader {
     if (data == 'primary-key') return PrimaryKeyColumn(false);
 
     if (data is Map<String, dynamic>) {
-      final allowedLengths = data['allowed-lengths'] as Map<String, dynamic>;
-      return LimitingTextLength(
-        minLength: allowedLengths['min'] as int?,
-        maxLength: allowedLengths['max'] as int?,
-      );
+      final allowedLengths = data['allowed-lengths'] as Map<String, dynamic>?;
+      final check = data['check'] as Map<String, dynamic>?;
+
+      if (allowedLengths != null) {
+        return LimitingTextLength(
+          minLength: allowedLengths['min'] as int?,
+          maxLength: allowedLengths['max'] as int?,
+        );
+      } else if (check != null) {
+        return DartCheckExpression.fromJson(check);
+      }
     }
 
     return null;
@@ -526,5 +673,18 @@ extension _SerializeSqlType on DriftSqlType {
 
   String toSerializedString() {
     return name;
+  }
+}
+
+extension on CreateTableStatement {
+  ColumnDefinition? column(String name) {
+    final lowercaseName = name.toLowerCase();
+
+    for (final column in columns) {
+      if (column.columnName.toLowerCase() == lowercaseName) {
+        return column;
+      }
+    }
+    return null;
   }
 }

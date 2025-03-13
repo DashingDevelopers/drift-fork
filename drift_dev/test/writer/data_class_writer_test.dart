@@ -75,14 +75,20 @@ class Database extends _$Database {}
       checkOutputs({
         'a|lib/main.drift.dart': decodedMatches(contains(r'''
   @override
-  Future<MyCustomClass> map(Map<String, dynamic> data,
-      {String? tablePrefix}) async {
+  Future<MyCustomClass> map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) async {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return await MyCustomClass.load(
-      attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}foo'])!,
-      attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}bar'])!,
+      attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}foo'],
+      )!,
+      attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}bar'],
+      )!,
     );
   }
 ''')),
@@ -173,6 +179,28 @@ mixin PostsToColumns implements i1.Insertable<i2.Post> {
 }
 ''')),
     }, writer.dartOutputs, writer.writer);
+  });
+
+  test('generates copyWithCompanion', () async {
+    final result = await emulateDriftBuild(modularBuild: true, inputs: {
+      'a|lib/a.dart': '''
+import 'package:drift/drift.dart';
+
+class Items extends Table {
+  TextColumn get name => text()();
+}
+''',
+    });
+
+    checkOutputs({
+      'a|lib/a.drift.dart': decodedMatches(contains(r'''
+  Item copyWithCompanion(i1.ItemsCompanion data) {
+    return Item(
+      name: data.name.present ? data.name.value : this.name,
+    );
+  }
+''')),
+    }, result.dartOutputs, result.writer);
   });
 
   test('generates correct fromJson for nullable converters', () async {
@@ -296,8 +324,10 @@ class Database extends _$Database {}
 
       checkOutputs({
         'a|lib/main.drift.dart': decodedMatches(contains(r'''
-  factory MyTableData.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory MyTableData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return MyTableData(
       myFirstColumn: serializer.fromJson<String>(json['my_first_column']),
@@ -312,7 +342,6 @@ class Database extends _$Database {}
       'my_second_column': serializer.toJson<int>(mySecondColumn),
     };
   }
-
 ''')),
       }, writer.dartOutputs, writer.writer);
     },
@@ -361,25 +390,60 @@ class Database extends _$Database {}
             'class FirstDataClass extends DataClass implements Insertable<FirstDataClass> {',
           ),
           contains(
-            'class FirstTableCompanion extends UpdateCompanion<FirstDataClass> {',
+            'class FirstCompanionClass extends UpdateCompanion<FirstDataClass> {',
           ),
           contains(
             'class SecondDataClass extends DataClass implements Insertable<SecondDataClass> {',
           ),
           contains(
-            'class SecondTableCompanion extends UpdateCompanion<SecondDataClass> {',
+            'class SecondCompanionClass extends UpdateCompanion<SecondDataClass> {',
           ),
           contains(
             'class ThirdTableData extends DataClass implements Insertable<ThirdTableData> {',
           ),
           contains(
-            'class ThirdTableCompanion extends UpdateCompanion<ThirdTableData> {',
+            'class ThirdCompanionClass extends UpdateCompanion<ThirdTableData> {',
           ),
         ])),
       }, writer.dartOutputs, writer.writer);
     },
     tags: 'analyzer',
   );
+
+  test('generates implements clause', () async {
+    final results = await emulateDriftBuild(
+      inputs: const {
+        'a|lib/main.dart': r'''
+import 'package:drift/drift.dart';
+
+part 'main.drift.dart';
+
+abstract interface class HasCreationTimes {
+   DateTime get createdAt;
+ }
+
+@DataClassName.custom(implementing: [HasCreationTimes])
+class Accounts extends Table {
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+}
+
+@DriftDatabase(
+  tables: [Accounts],
+)
+class Database extends _$Database {}
+'''
+      },
+    );
+
+    checkOutputs(
+      {
+        'a|lib/main.drift.dart': decodedMatches(
+            contains('implements Insertable<Account>, HasCreationTimes'))
+      },
+      results.dartOutputs,
+      results.writer,
+    );
+  });
 }
 
 class _GeneratesConstDataClasses extends Matcher {

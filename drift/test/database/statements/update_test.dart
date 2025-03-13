@@ -24,7 +24,7 @@ void main() {
     test('for entire table', () async {
       await db.update(db.todosTable).write(const TodosTableCompanion(
             title: Value('Updated title'),
-            category: Value(3),
+            category: Value(RowId(3)),
           ));
 
       verify(executor.runUpdate(
@@ -211,5 +211,14 @@ void main() {
         descriptionInUpperCase: 'TEST',
       ),
     ]);
+  });
+
+  test('can use empty companion for update', () async {
+    expect(
+      await db.categories.update().writeReturning(const CategoriesCompanion()),
+      isEmpty,
+    );
+
+    verifyNever(executor.runSelect(any, any));
   });
 }

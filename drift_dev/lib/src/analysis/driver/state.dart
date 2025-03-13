@@ -3,7 +3,6 @@ import 'package:meta/meta.dart';
 import 'package:path/path.dart' show url;
 import 'package:sqlparser/sqlparser.dart' hide AnalysisError;
 
-import '../resolver/intermediate_state.dart';
 import '../results/database.dart';
 import '../results/element.dart';
 import '../results/file_results.dart';
@@ -98,9 +97,7 @@ class FileState {
             .any((e) => e is DefinedSqlQuery && e.mode == QueryMode.regular) ||
         // Also check discovery, we might not have analyzed all elements in this
         // file if it's just an import.
-        discovery?.locallyDefinedElements.any((e) =>
-                e is DiscoveredDriftStatement && e.sqlNode.isRegularQuery) ==
-            true;
+        definedElements.any((e) => e.kind == DriftElementKind.definedQuery);
   }
 
   /// Whether an accessor class making queries and imports available should be

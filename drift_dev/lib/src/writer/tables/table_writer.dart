@@ -40,6 +40,10 @@ abstract class TableOrViewWriter {
   }
 
   void writeConvertersAsStaticFields() {
+    if (emitter.writer.generationOptions.avoidUserCode) {
+      return;
+    }
+
     for (final converter in tableOrView.appliedConverters) {
       if (converter.owningColumn?.owner != tableOrView) continue;
 
@@ -257,7 +261,8 @@ abstract class TableOrViewWriter {
           emitter.dartCode(column.defaultArgument!);
     }
 
-    if (column.clientDefaultCode != null) {
+    if (column.clientDefaultCode != null &&
+        !emitter.writer.generationOptions.avoidUserCode) {
       additionalParams['clientDefault'] =
           emitter.dartCode(column.clientDefaultCode!);
     }
@@ -287,7 +292,7 @@ abstract class TableOrViewWriter {
     expressionBuffer.write(')');
 
     final converter = column.typeConverter;
-    if (converter != null) {
+    if (converter != null && !emitter.writer.generationOptions.avoidUserCode) {
       // Generate a GeneratedColumnWithTypeConverter instance, as it has
       // additional methods to check for equality against a mapped value.
       final mappedType = emitter.dartCode(emitter.writer.dartType(column));
@@ -451,8 +456,14 @@ class TableWriter extends TableOrViewWriter {
     buffer.write('}');
   }
 
+  bool _generateVerificationFor(DriftColumn column) {
+    // dont't verify custom columns, we assume that the user knows what
+    // they're doing
+    return column.typeConverter == null;
+  }
+
   void _writeColumnVerificationMeta(DriftColumn column) {
-    if (!_skipVerification) {
+    if (!_skipVerification && _generateVerificationFor(column)) {
       final meta = emitter.drift('VerificationMeta');
       final arg = asDartLiteral(column.nameInDart);
 
@@ -464,6 +475,10 @@ class TableWriter extends TableOrViewWriter {
 
   void _writeValidityCheckMethod() {
     if (_skipVerification) return;
+
+    if (!table.columns.any(_generateVerificationFor)) {
+      return;
+    }
 
     final innerType = emitter.dartCode(emitter.writer.rowType(table));
     emitter
@@ -481,11 +496,7 @@ class TableWriter extends TableOrViewWriter {
       final getterName = thisIfNeeded(column.nameInDart, locals);
       final metaName = _fieldNameForColumnMeta(column);
 
-      if (column.typeConverter != null) {
-        // dont't verify custom columns, we assume that the user knows what
-        // they're doing
-        buffer.write('context.handle($metaName, '
-            'const ${emitter.drift('VerificationResult')}.success());');
+      if (!_generateVerificationFor(column)) {
         continue;
       }
 

@@ -1,7 +1,124 @@
-## 2.19.0-dev
+## 2.26.0
 
+- Add support for window functions with `WindowFunctionExpression`.
+
+## 2.25.1
+
+- Fix shared worker feature detection when the main app is compiled with
+  `dart2wasm`.
+
+## 2.25.0
+
+- Report `SqliteException`s occurring on workers as `SqliteException`
+  instances. Previously, they were sent as strings only.
+- Fix `LazyDatabase` being closed without ever being used potentially leaking
+  resources.
+
+## 2.24.0
+
+- Add `TypeConverter.jsonb` to directly store values in the JSONB format used
+  by SQLite.
+- Deprecate `TypeConverter.json` utility in favor of `TypeConverter.json2`. The
+  new method avoids encoding values twice when mapping drift row classes to
+  JSON.
+- Add `runWithInterceptor` method to databases to only apply interceptors in
+  a restricted block.
+
+## 2.23.1
+
+- Fix `TableStatements.insertAll` to only apply a database-specific pragma for
+  SQLite databases.
+- Don't attempt to roll-back transactions that failed to begin.
+- Fix unhandled exception when cancelling transactions.
+- Fix deadlock when drift databases are used in a `fake_async` Zone and then
+  closed outside that zone.
+
+## 2.23.0
+
+- Allow building compound select statements in Dart.
+- Support `NULLS FIRST` and `NULLS LAST` in manager API.
+
+## 2.22.1
+
+- Fix generated SQL for `insertFromSelect` statements with upserts.
+- Fix `alterTable` for databases where `legacy_alter_table` is not writable.
+- Allow `package:drift/web.dart` to be imported into Dart apps compiled with
+  dart2wasm.
+
+## 2.22.0
+
+- Add `sqliteAny()` method to tables to declare `ANY` columns.
+- Add missing parentheses around adjacent expressions of the same precedence.
+- Fix creating tables that are both `STRICT` and `WITHOUT ROWID`.
+- WASM: Report worker failures to make them easier to diagnose.
+- Allow closing stream queries synchronously, making drift easier to use in
+  widget tests.
+
+## 2.21.0
+
+- To infer whether serialization is required for inter-isolate communication,
+  drift now sends a test message instead serializing by default.
+- The manager API now ignores references whose target column is a foreign key itself.
+- The DevTools extension can now clear drift databases.
+- `View.from` is now declared to return a `JoinedSelectStatement`, the type it
+  returns at runtime.
+
+## 2.20.2
+
+- Fix upcoming `unreachable_switch_default` lint.
+
+## 2.20.1
+
+- Migrate legacy `package:drift/web.dart` to the new JS interop SDK libraries.
+  For backwards compatibility, the `channel()` extension on the `MessagePort`
+  class in `dart:html` has been kept.
+  Once `dart:html` is removed from the Dart SDK, that extension will have to
+  be removed from drift as well.
+- Fix cast errors in the protocol for remote workers when compiling with
+  `dart2wasm`.
+- Introduce a faster protocol for communicating with workers. This protocol is
+  enabled automatically after upgrading `drift_worker.js`.
+
+## 2.20.0
+
+- Improve manager API to be able to resolve references when running queries.
+- Add `readPool` parameter to `NativeDatabase`. It will spawn an additional
+  pool of isolates used to serve multiple reads in parallel, which can improve
+  performance in some specific workloads.
+- Add `TableIndex.sql`, allowing database indexes to be defined in SQL without
+  using drift files.
+- Add `DataClassName.implementing`, which can be used to make drift-generated
+  row classes implement existing interfaces.
+- Mark legacy `package:drift/web.dart` as deprecated. Users should migrate to
+  `package:drift/wasm.dart`.
+
+## 2.19.2
+
+- Support version `1.x` of `package:web`.
+
+## 2.19.1+1
+
+- Fix `exclusively` breaking the database connection on the web. Please note
+  that this requires an updated `drift_worker.js` to fix.
+
+## 2.19.0
+
+- Add `exclusively` method to database classes, allowing a block to temporarily
+  take exclusive control over a database connection without starting a
+  transaction.
 - Add the `enableMigrations` parameter to `WasmDatabase` to control whether drift
   migrations are enabled on that database.
+- Add `initiallyDeferred` option to `references()` column builder for foreign
+  key constraints.
+- Add `dropColumn` method to `Migrator`.
+- Add `selectExpressions` method to build select statements without a `FROM`
+  clause.
+- Fix encoding `BigInt` arguments in batched statements sent to web workers.
+  Note that the fix also requires the latest `drift_worker.js` to be effective.
+- Both `transaction` and `exclusively` will wait for the transaction or the
+  exclusive lock to be set up before invoking their callback now.
+- Fix stream queries possibly cancelling a migration if they are the first method
+  on the database.
 
 ## 2.18.0
 

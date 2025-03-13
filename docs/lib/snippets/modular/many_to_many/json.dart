@@ -36,8 +36,7 @@ class ShoppingCartEntries {
     return _$ShoppingCartEntriesToJson(this);
   }
 
-  static JsonTypeConverter<ShoppingCartEntries, String> converter =
-      TypeConverter.json(
+  static final converter = TypeConverter.json2(
     fromJson: (json) =>
         ShoppingCartEntries.fromJson(json as Map<String, Object?>),
     toJson: (entries) => entries.toJson(),

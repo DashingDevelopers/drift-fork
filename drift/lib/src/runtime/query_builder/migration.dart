@@ -158,7 +158,7 @@ class Migrator {
     final foreignKeysEnabled =
         (await database.customSelect('PRAGMA foreign_keys').getSingle())
             .read<bool>('foreign_keys');
-    final legacyAlterTable =
+    bool? legacyAlterTable =
         (await database.customSelect('PRAGMA legacy_alter_table').getSingle())
             .read<bool>('legacy_alter_table');
 
@@ -255,8 +255,31 @@ class Migrator {
       // we've just dropped the original table), we need to enable the legacy
       // option which skips the integrity check.
       // See also: https://sqlite.org/forum/forumpost/0e2390093fbb8fd6
-      if (!legacyAlterTable) {
-        await _issueCustomQuery('pragma legacy_alter_table = 1;');
+      if (legacyAlterTable == false) {
+        try {
+          await _issueCustomQuery('pragma legacy_alter_table = 1;');
+        } on Object {
+          // On some databases like Turso, legacy_alter_table is not writable.
+          legacyAlterTable = null;
+
+          // A workaround is to drop all views and to re-create them later.
+          // We're not doing this by default to ensure we're not breaking
+          // existing users (e.g. if the new table references a view somehow).
+          final allViews = await database.customSelect(
+            'SELECT name, sql FROM sqlite_master WHERE type = ?;',
+            variables: [Variable<String>('view')],
+          ).get();
+
+          for (final row in allViews) {
+            final sql = row.read<String>('sql');
+            if (!createAffected.contains(sql)) {
+              createAffected.add(sql);
+            }
+
+            final name = row.read<String>('name');
+            await database.customStatement('DROP VIEW "$name";');
+          }
+        }
       }
 
       // Step 7: Rename the new table to the old name
@@ -264,7 +287,7 @@ class Migrator {
           'ALTER TABLE ${context.identifier(temporaryName)} '
           'RENAME TO ${context.identifier(tableName)}');
 
-      if (!legacyAlterTable) {
+      if (legacyAlterTable == false) {
         await _issueCustomQuery('pragma legacy_alter_table = 0;');
       }
 
@@ -346,12 +369,15 @@ class Migrator {
 
     context.buffer.write(')');
 
-    // == true because of nullability
-    if (dslTable.withoutRowId) {
-      context.buffer.write(' WITHOUT ROWID');
-    }
-    if (dslTable.isStrict) {
-      context.buffer.write(' STRICT');
+    final options = [
+      if (dslTable.withoutRowId) 'WITHOUT ROWID',
+      if (dslTable.isStrict) 'STRICT'
+    ].join(', ');
+
+    if (options.isNotEmpty) {
+      context.buffer
+        ..write(' ')
+        ..write(options);
     }
 
     context.buffer.write(';');
@@ -437,6 +463,27 @@ class Migrator {
     context.buffer.write(';');
 
     return _issueCustomQuery(context.sql);
+  }
+
+  /// Attempts to alter [table] to drop the [column].
+  ///
+  /// Please see the [sqlite3 documentation](https://sqlite.org/lang_altertable.html#altertabdropcol)
+  /// on this functionality for possible caveats. In particular, be aware that
+  /// indexed columns (also if they're part of a primary or unique key) or
+  /// columns that are otherwise referenced in another table, trigger or view
+  /// cannot be dropped.
+  /// For columns only referenced in the [table] itself, calling [alterTable]
+  /// with an empty [TableMigration] re-creates the table and thus drops the
+  /// column while also re-creating relevant keys. If the column is referenced
+  /// by another table, view, index or trigger, that entity needs to be updated
+  /// first.
+  ///
+  /// Note that this method requires sqlite 3.35.0 or later.
+  Future<void> dropColumn(TableInfo table, String column) async {
+    final context = _createContext();
+    context.buffer.write(
+        'ALTER TABLE ${context.identifier(table.aliasedName)} DROP COLUMN ${context.identifier(column)}');
+    await _issueCustomQuery(context.sql);
   }
 
   /// Changes the name of a column in a [table].

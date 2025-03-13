@@ -2,6 +2,7 @@ import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/syntactic_entity.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:collection/collection.dart';
+import 'package:drift/drift.dart' show DriftSqlType;
 import 'package:drift_dev/src/analysis/resolver/shared/data_class.dart';
 import 'package:sqlparser/sqlparser.dart' as sql;
 
@@ -57,6 +58,7 @@ class DartTableResolver extends LocalElementResolver<DiscoveredDartTable> {
       references: references.toList(),
       nameOfRowClass:
           dataClassInfo.enforcedName ?? dataClassNameForClassName(element.name),
+      interfacesForRowClass: dataClassInfo.interfaces,
       nameOfCompanionClass: dataClassInfo.companionName,
       existingRowClass: dataClassInfo.existingClass,
       customParentClass: dataClassInfo.extending,
@@ -68,16 +70,27 @@ class DartTableResolver extends LocalElementResolver<DiscoveredDartTable> {
       ],
       overrideTableConstraints: tableConstraints,
       withoutRowId: await _overrideWithoutRowId(element) ?? false,
+      strict: await _isStrict(element) ?? false,
       attachedIndices: [
         for (final id in discovered.attachedIndices) id.name,
       ],
     );
 
-    if (primaryKey != null &&
-        columns.any((c) => c.constraints.any((e) => e is PrimaryKeyColumn))) {
+    final columnsWithPrimaryKeyConstraint = columns
+        .where((c) => c.constraints.any((e) => e is PrimaryKeyColumn))
+        .length;
+    if (primaryKey != null && columnsWithPrimaryKeyConstraint > 0) {
       reportError(DriftAnalysisError.forDartElement(
         element,
         "Tables can't override primaryKey and use autoIncrement()",
+      ));
+    }
+
+    if (columnsWithPrimaryKeyConstraint > 1) {
+      reportError(DriftAnalysisError.forDartElement(
+        element,
+        'More than one column uses autoIncrement(). This would require '
+        'multiple primary keys, which is not supported.',
       ));
     }
 
@@ -112,13 +125,29 @@ class DartTableResolver extends LocalElementResolver<DiscoveredDartTable> {
       ));
     }
 
+    if (!table.strict &&
+        table.columns.any((c) => switch (c.sqlType) {
+              ColumnDriftType(:final builtin) => builtin == DriftSqlType.any,
+              ColumnCustomType() => false,
+            })) {
+      reportError(DriftAnalysisError.forDartElement(
+        element,
+        'The `ANY` type is only meaningful for `STRICT` tables. '
+        'Override `bool get isStrict => true;` to use the `ANY` type.',
+      ));
+    }
+
     return table;
   }
 
   Future<Set<DriftColumn>?> _readPrimaryKey(
-      ClassElement element, List<DriftColumn> columns) async {
-    final primaryKeyGetter = element.augmented
-        .lookUpGetter(name: 'primaryKey', library: element.library);
+    ClassElement element,
+    List<DriftColumn> columns,
+  ) async {
+    final primaryKeyGetter = element.augmented.lookUpGetter(
+      name: 'primaryKey',
+      library: element.library,
+    );
 
     if (primaryKeyGetter == null || primaryKeyGetter.isFromDefaultTable) {
       // resolved primaryKey is from the Table dsl superclass. That means there
@@ -156,16 +185,22 @@ class DartTableResolver extends LocalElementResolver<DiscoveredDartTable> {
       }
     } else {
       reportError(DriftAnalysisError.forDartElement(
-          primaryKeyGetter, 'This must return a set literal!'));
+        primaryKeyGetter,
+        'This must return a set literal!',
+      ));
     }
 
     return parsedPrimaryKey;
   }
 
   Future<List<Set<DriftColumn>>?> _readUniqueKeys(
-      ClassElement element, List<DriftColumn> columns) async {
-    final uniqueKeyGetter = element.augmented
-        .lookUpGetter(name: 'uniqueKeys', library: element.library);
+    ClassElement element,
+    List<DriftColumn> columns,
+  ) async {
+    final uniqueKeyGetter = element.augmented.lookUpGetter(
+      name: 'uniqueKeys',
+      library: element.library,
+    );
 
     if (uniqueKeyGetter == null || uniqueKeyGetter.isFromDefaultTable) {
       // resolved uniqueKeys is from the Table dsl superclass. That means there
@@ -210,20 +245,26 @@ class DartTableResolver extends LocalElementResolver<DiscoveredDartTable> {
           parsedUniqueKeys.add(uniqueKey);
         } else {
           reportError(DriftAnalysisError.forDartElement(
-              uniqueKeyGetter, 'This must return a set list literal!'));
+            uniqueKeyGetter,
+            'This must return a set list literal!',
+          ));
         }
       }
     } else {
       reportError(DriftAnalysisError.forDartElement(
-          uniqueKeyGetter, 'This must return a set list literal!'));
+        uniqueKeyGetter,
+        'This must return a set list literal!',
+      ));
     }
 
     return parsedUniqueKeys;
   }
 
-  Future<bool?> _overrideWithoutRowId(ClassElement element) async {
-    final getter = element.augmented
-        .lookUpGetter(name: 'withoutRowId', library: element.library);
+  Future<bool?> _booleanGetter(ClassElement element, String name) async {
+    final getter = element.augmented.lookUpGetter(
+      name: name,
+      library: element.library,
+    );
 
     // Was the getter overridden at all?
     if (getter == null || getter.isFromDefaultTable) return null;
@@ -246,29 +287,86 @@ class DartTableResolver extends LocalElementResolver<DiscoveredDartTable> {
     return null;
   }
 
+  Future<bool?> _overrideWithoutRowId(ClassElement element) async {
+    return await _booleanGetter(element, 'withoutRowId');
+  }
+
+  Future<bool?> _isStrict(ClassElement element) async {
+    return await _booleanGetter(element, 'isStrict');
+  }
+
   Future<Iterable<PendingColumnInformation>> _parseColumns(
       ClassElement element) async {
-    final columnNames = element.allSupertypes
-        .map((t) => t.element)
-        .followedBy([element])
-        .expand((e) => e.fields)
-        .where((field) =>
-            isColumn(field.type) &&
-            field.getter != null &&
-            !field.getter!.isSynthetic)
-        .map((field) => field.name)
-        .toSet();
+    // Returns true if the given field is a column defined as a getter
+    bool isGetterColumn(FieldElement e) {
+      return isColumn(e.type) && e.getter != null && !e.getter!.isSynthetic;
+    }
 
-    final fields = columnNames.map((name) {
-      final getter = element.getGetter(name) ??
-          element.lookUpInheritedConcreteGetter(name, element.library);
-      return getter!.variable2!;
-    });
+    // Returns true if the given field is a column defined as a late final variable declaration
+    Future<bool> isLateFinalColumn(FieldElement e) async {
+      final isLateFinalField = e.isLate && e.isFinal && e.getter != null;
+      if (!isLateFinalField) return false;
+
+      if (isColumn(e.type)) {
+        return true;
+      } else {
+        if (isColumnBuilder(e.type)) {
+          // When defining a column with a declaration it's possible that the user
+          // forgot to add an extra pair of parentheses at the end.
+          // In that case, field would be a `ColumnBuilder` instead of a `Column`.
+          // We should warn the user about this.
+          // To print a detailed error message we willresolve the element to get the entire field declaration.
+          final declaration = (await resolver.driver.backend
+              .loadElementDeclaration(e.declaration) as VariableDeclaration);
+          reportError(DriftAnalysisError.inDartAst(
+            declaration.declaredElement!,
+            declaration.endToken,
+            '\nIt seems that you forgot to initialize the `${e.getter?.name}` column on the `${element.name}` table.\n'
+            'Solution: Add an extra pair of parentheses at the end of the column: `$declaration()`.',
+          ));
+        }
+        return false;
+      }
+    }
+
+    final Set<String> columnNames = {};
+    for (final element in element.allSupertypes
+        .map((t) => t.element)
+        .followedBy([element]).expand((e) => e.fields)) {
+      if (isGetterColumn(element) || await isLateFinalColumn(element)) {
+        columnNames.add(element.name);
+      }
+    }
+
+    final fields = columnNames
+        .map((name) {
+          final getter = element.getGetter(name) ??
+              element.lookUpInheritedConcreteGetter(name, element.library);
+          return getter!.variable2;
+        })
+        .nonNulls
+        .toList();
+    final all = {for (final entry in fields) entry.getter ?? entry: entry.name};
+
     final results = <PendingColumnInformation>[];
     for (final field in fields) {
-      final node = await resolver.driver.backend
-          .loadElementDeclaration(field.getter!) as MethodDeclaration;
-      final column = await _parseColumn(node, field.getter!);
+      final ColumnDeclaration node;
+      final PendingColumnInformation? column;
+      if (field.getter!.isSynthetic) {
+        node = ColumnDeclaration(
+            await resolver.driver.backend
+                    .loadElementDeclaration(field.declaration)
+                as VariableDeclaration,
+            null);
+        column = await _parseColumn(node, field.declaration, all);
+      } else {
+        node = ColumnDeclaration(
+            null,
+            await resolver.driver.backend.loadElementDeclaration(field.getter!)
+                as MethodDeclaration);
+
+        column = await _parseColumn(node, field.getter!, all);
+      }
 
       if (column != null) {
         results.add(column);
@@ -279,26 +377,37 @@ class DartTableResolver extends LocalElementResolver<DiscoveredDartTable> {
   }
 
   Future<PendingColumnInformation?> _parseColumn(
-      MethodDeclaration declaration, Element element) async {
-    return ColumnParser(this).parse(declaration, element);
+    ColumnDeclaration declaration,
+    Element element,
+    Map<Element, String> allColumns,
+  ) async {
+    return ColumnParser(this, allColumns).parse(declaration, element);
   }
 
-  Future<List<String>> _readCustomConstraints(Set<DriftElement> references,
-      List<DriftColumn> localColumns, ClassElement element) async {
-    final customConstraints = element.augmented
-        .lookUpGetter(name: 'customConstraints', library: element.library);
+  Future<List<String>> _readCustomConstraints(
+    Set<DriftElement> references,
+    List<DriftColumn> localColumns,
+    ClassElement element,
+  ) async {
+    final customConstraints = element.augmented.lookUpGetter(
+      name: 'customConstraints',
+      library: element.library,
+    );
 
     if (customConstraints == null || customConstraints.isFromDefaultTable) {
       // Does not define custom constraints
       return const [];
     }
 
-    final ast = await resolver.driver.backend
-        .loadElementDeclaration(customConstraints) as MethodDeclaration;
+    final ast = await resolver.driver.backend.loadElementDeclaration(
+      customConstraints,
+    ) as MethodDeclaration;
     final body = ast.body;
     if (body is! ExpressionFunctionBody) {
-      reportError(DriftAnalysisError.forDartElement(customConstraints,
-          'This must return a list literal with the => syntax'));
+      reportError(DriftAnalysisError.forDartElement(
+        customConstraints,
+        'This must return a list literal with the => syntax',
+      ));
       return const [];
     }
     final expression = body.expression;
@@ -371,5 +480,58 @@ class DartTableResolver extends LocalElementResolver<DiscoveredDartTable> {
     }
 
     return foundConstraints;
+  }
+}
+
+/// Wraps the declaration of a column in a Dart table class as either a
+/// [VariableDeclaration] or a [MethodDeclaration].
+///
+/// This allows us to abstract over the different ways in which a column can be
+/// declared in Drift.
+///
+/// e.g. VariableDeclaration:
+/// ```dart
+/// late final count = integer()();
+/// ```
+///
+/// e.g. MethodDeclaration:
+/// ```dart
+/// IntColumn get count => integer()();
+/// ```
+///
+///
+class ColumnDeclaration {
+  final VariableDeclaration? variable;
+  final MethodDeclaration? method;
+
+  ColumnDeclaration(this.variable, this.method)
+      : assert(variable != null || method != null);
+
+  Expression? get expression {
+    if (method != null) {
+      final body = method!.body;
+      if (body is! ExpressionFunctionBody) {
+        return null;
+      }
+      return body.expression;
+    } else {
+      return variable?.initializer;
+    }
+  }
+
+  String get lexemeName {
+    if (method != null) {
+      return method!.name.lexeme;
+    } else {
+      return variable!.name.lexeme;
+    }
+  }
+
+  Comment? get documentationComment {
+    if (method != null) {
+      return method!.documentationComment;
+    } else {
+      return variable!.documentationComment;
+    }
   }
 }

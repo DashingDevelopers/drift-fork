@@ -42,5 +42,6 @@ class ColorConverter extends TypeConverter<Color, int> {
   Color fromSql(int fromDb) => Color(fromDb);
 
   @override
+  // ignore: deprecated_member_use
   int toSql(Color value) => value.value;
 }

@@ -32,7 +32,7 @@ class _CustomFunctions extends FunctionHandler {
 
   @override
   ResolveResult inferArgumentType(
-      AnalysisContext context, SqlInvocation call, Expression argument) {
+      TypeInferenceSession session, SqlInvocation call, Expression argument) {
     final types = _functions[call.name.toLowerCase()]?.argumentTypes;
     if (types == null) {
       return const ResolveResult.unknown();
@@ -51,8 +51,8 @@ class _CustomFunctions extends FunctionHandler {
   }
 
   @override
-  ResolveResult inferReturnType(AnalysisContext context, SqlInvocation call,
-      List<Typeable> expandedArgs) {
+  ResolveResult inferReturnType(TypeInferenceSession session,
+      SqlInvocation call, List<Typeable> expandedArgs) {
     final type = _functions[call.name.toLowerCase()]?.returnType;
 
     return type != null ? ResolveResult(type) : const ResolveResult.unknown();

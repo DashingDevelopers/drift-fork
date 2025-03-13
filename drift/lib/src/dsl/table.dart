@@ -165,7 +165,7 @@ abstract class Table extends HasResultSet {
   ColumnBuilder<bool> boolean() => _isGenerated();
 
   /// Use this as the body of a getter to declare a column that holds date and
-  /// time.
+  /// time values.
   ///
   /// Drift supports two modes for storing date times: As unix timestamp with
   /// second accuracy (the default) and as ISO 8601 string with microsecond
@@ -177,6 +177,10 @@ abstract class Table extends HasResultSet {
   /// ```
   /// DateTimeColumn get accountCreatedAt => dateTime()();
   /// ```
+  ///
+  /// [dateTime] columns are optimized for SQLite. When using drift with another
+  /// database, such as PostgreSQL, use [native datetime columns](https://drift.simonbinder.eu/platforms/postgres/#avoiding-sqlite-specific-drift-apis).
+  ///
   /// [the documentation]: https://drift.simonbinder.eu/docs/getting-started/advanced_dart_tables/#supported-column-types
   @protected
   ColumnBuilder<DateTime> dateTime() => _isGenerated();
@@ -196,6 +200,15 @@ abstract class Table extends HasResultSet {
   /// ```
   @protected
   ColumnBuilder<double> real() => _isGenerated();
+
+  /// Use this as a the body of a getter to declare a column that holds
+  /// arbitrary values not modified by drift at runtime.
+  ///
+  /// The type of this column in the schema is `ANY`, which is particularly
+  /// useful for columns with an unknown type in [isStrict] tables.
+  /// This type has no direct equivalent for other database engines.
+  @protected
+  ColumnBuilder<DriftAny> sqliteAny() => _isGenerated();
 
   /// Defines a column with a custom [type] when used as a getter.
   ///
@@ -241,7 +254,7 @@ abstract class View extends HasResultSet {
   /// }
   /// ```
   @protected
-  SimpleSelectStatement from(Table table) => _isGenerated();
+  JoinedSelectStatement from(Table table) => _isGenerated();
 
   /// This method is overridden by Dart-defined views to declare the right
   /// query to run.
@@ -282,6 +295,12 @@ final class TableIndex {
   /// using `#nextUpdateSnapshot`.
   final Set<Symbol> columns;
 
+  /// As an alternative to [name], [unique] and [columns], a `CREATE INDEX` SQL
+  /// statement defining the index.
+  ///
+  /// `drift_dev` will parse and validate the statement at build-time.
+  final String? createIndexStatement;
+
   /// An annotation for Dart-defined drift tables telling drift to add an SQL
   /// index to the table.
   ///
@@ -290,7 +309,19 @@ final class TableIndex {
     required this.name,
     required this.columns,
     this.unique = false,
-  });
+  }) : createIndexStatement = null;
+
+  /// An annotation for Dart-defined drift tables telling drift to add an index
+  /// defined by a [createIndexStatement].
+  ///
+  /// The index is still validated by `drift_dev` at build time. Using a custom
+  /// SQL statement enables advanced index options, such as using custom
+  /// collations or indexing expressions. It can also be used for partials
+  /// indexes by adding a `WHERE` clause.
+  const TableIndex.sql(String this.createIndexStatement)
+      : name = '',
+        unique = false,
+        columns = const {};
 }
 
 /// A class to be used as an annotation on [Table] classes to customize the
@@ -346,22 +377,117 @@ class DataClassName {
   /// ```
   final Type? extending;
 
-  /// Customize the data class name for a given table.
-  /// {@macro drift_custom_data_class}
-  const DataClassName(this.name, {this.extending, this.companion});
+  /// A list of classes that the drift-generated row class should implement.
+  ///
+  /// Listing classes here can be useful when you have several tables with the
+  /// same columns, as it allows extracting them into common interfaces shared
+  /// between multiple row classes:
+  ///
+  /// ```dart
+  /// abstract interface class HasCreationTimes {
+  ///   DateTime get createdAt;
+  /// }
+  ///
+  /// @DataClassName.custom(implementing: [HasCreationTimes])
+  /// class Accounts extends Table {
+  ///   // ...
+  ///   DateTimeColumn get createdAt => dateTime()
+  ///     .withDefault(currentDateAndTime)();
+  /// }
+  /// ```
+  final List<Type>? implementing;
 
   /// Customize the data class name for a given table.
   /// {@macro drift_custom_data_class}
-  const DataClassName.custom({this.name, this.extending, this.companion});
+  const DataClassName(
+    this.name, {
+    this.extending,
+    this.implementing,
+    this.companion,
+  });
+
+  /// Customize the data class name for a given table.
+  /// {@macro drift_custom_data_class}
+  const DataClassName.custom({
+    this.name,
+    this.extending,
+    this.implementing,
+    this.companion,
+  });
 }
 
 /// An annotation specifying an existing class to be used as a data class.
+///
+/// By default, drift generates a row class as a typed representation of a row
+/// in the table classes you define.
+/// If you want to, you can replace this row class with your own structure by
+/// applying [UseRowClass] on the table:
+///
+/// ```dart
+/// @UseRowClass(User)
+/// class Users extends Table {
+///   IntColumn get id => integer().autoIncrement()();
+///   TextColumn get name => text()();
+/// }
+///
+/// final class User {
+///   final int id;
+///   final String name;
+///
+///   User(this.id, this.name);
+/// }
+/// ```
+///
+/// The associated row class must have a constructor "compatible" with the
+/// columns from the table (meaning that each parameter on the constructor
+/// matches a column from the table by name and type). Not all columns present
+/// in the table need to be added to the row class, drift will simply ignore the
+/// others. Since drift constructs the row class from a table row however, the
+/// constructor must not have parameters not present as table columns.
+///
+/// Instead of an existing class, you can also use [Record] or a record type
+/// through a typedef as a type to use for rows:
+///
+/// ```dart
+/// typedef User = ({int id, String name});
+///
+/// @UseRowClass(User)
+/// class Users extends Table {
+/// ```
+///
+/// If you want to use instances of your custom row classes as sources for
+/// inserts or update statements, you can enable the `write_to_columns_mixins`
+// ignore: deprecated_member_use_from_same_package
+/// builder option or set [generateInsertable] to true. It will make drift
+/// generate an extension on the row type to return a companion:
+///
+/// ```dart
+/// @UseRowClass(User, generateInsertable: true)
+/// class Users extends Table {
+///   IntColumn get id => integer().autoIncrement()();
+///   TextColumn get name => text()();
+/// }
+///
+/// final class User implements Insertable<User> {
+///   final int id;
+///   final String name;
+///
+///   User(this.id, this.name);
+///
+///   @override
+///   Map<String, Expression> toColumns(bool nullToAbsent) {
+///     return toInsertable().toColumns(nullToAbsent);
+///   }
+/// }
+/// ```
+///
+/// For more details, see the [documentation page](https://drift.simonbinder.eu/dart_api/rows/#custom-dataclass).
 @Target({TargetKind.classType})
 class UseRowClass {
   /// The existing class
   ///
-  /// This type must refer to an existing class. All other types, like functions
-  /// or types with arguments, are not allowed.
+  /// This type must refer to an existing class or a record structure. All other
+  /// types, like functions or types with arguments, are not allowed.
   final Type type;
 
   /// The name of the constructor to use.
@@ -381,7 +507,7 @@ class UseRowClass {
   /// Customize the class used by drift to hold an instance of an annotated
   /// table.
   ///
-  /// For details, see the overall documentation on [UseRowClass].
+  /// For details, see the class documentation on [UseRowClass].
   const UseRowClass(this.type,
       {this.constructor = '', this.generateInsertable = false});
 }

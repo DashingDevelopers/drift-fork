@@ -10,7 +10,7 @@ final _dateFormat = DateFormat.yMMMd();
 class TodoEditDialog extends ConsumerStatefulWidget {
   final TodoEntry entry;
 
-  const TodoEditDialog({Key? key, required this.entry}) : super(key: key);
+  const TodoEditDialog({super.key, required this.entry});
 
   @override
   ConsumerState<TodoEditDialog> createState() => _TodoEditDialogState();
@@ -82,15 +82,10 @@ class _TodoEditDialogState extends ConsumerState<TodoEditDialog> {
       ),
       actions: [
         TextButton(
-          style: ButtonStyle(
-            textStyle: WidgetStateProperty.all(
-              const TextStyle(color: Colors.black),
-            ),
-          ),
           onPressed: () {
             Navigator.pop(context);
           },
-          child: const Text('Cancel'),
+          child: const Text('Cancel', style: TextStyle(color: Colors.black)),
         ),
         TextButton(
           child: const Text('Save'),

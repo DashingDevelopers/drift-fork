@@ -1,8 +1,10 @@
 @TestOn('vm')
+library;
+
 import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/internal/versioned_schema.dart';
 import 'package:drift/native.dart';
-import 'package:drift_dev/api/migrations.dart';
+import 'package:drift_dev/api/migrations_native.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 
@@ -139,6 +141,46 @@ void main() {
     db.migration = MigrationStrategy(
       onCreate: (m) async {
         await m.alterTable(TableMigration(db.todosTable));
+      },
+    );
+
+    final createStmt = await db
+        .customSelect("SELECT sql FROM sqlite_master WHERE name = 'todos'")
+        .map((row) => row.read<String>('sql'))
+        .getSingle();
+
+    expect(
+      createStmt,
+      isNot(contains('additional_column')),
+    );
+
+    final item = await db.select(db.todosTable).getSingle();
+    expect(item.title, 'title');
+  });
+
+  test('delete column with dropColumn', () async {
+    // Create todos table with an additional column
+    final executor = NativeDatabase.memory(setup: (db) {
+      db.execute('''
+        CREATE TABLE todos (
+          id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          target_date INTEGER NOT NULL,
+          category INTEGER NULL,
+          status TEXT NULL,
+          additional_column TEXT NULL
+        );
+      ''');
+
+      db.execute('INSERT INTO todos (title, content, target_date) '
+          "VALUES ('title', 'content', 0)");
+    });
+
+    final db = TodoDb(executor);
+    db.migration = MigrationStrategy(
+      onCreate: (m) async {
+        await m.dropColumn(db.todosTable, 'additional_column');
       },
     );
 
@@ -492,6 +534,19 @@ void main() {
 
     expect(underlying.userVersion, 3);
   });
+
+  test("alterTable works for databases that can't set legacy alter table",
+      () async {
+    final interceptor = _NoLegacyAlterTable();
+    final db = TodoDb(NativeDatabase.memory().interceptWith(interceptor));
+    addTearDown(db.close);
+
+    final user = await db.users.insertReturning(
+        UsersCompanion.insert(name: 'test user', profilePicture: Uint8List(0)));
+    await Migrator(db).alterTable(TableMigration(db.users));
+    expect(await db.users.all().get(), [user]);
+    expect(interceptor.didPreventLegacyAlterTable, isTrue);
+  });
 }
 
 class _TestDatabase extends GeneratedDatabase {
@@ -505,4 +560,19 @@ class _TestDatabase extends GeneratedDatabase {
 
   @override
   final MigrationStrategy migration;
+}
+
+class _NoLegacyAlterTable extends QueryInterceptor {
+  var didPreventLegacyAlterTable = false;
+
+  @override
+  Future<void> runCustom(
+      QueryExecutor executor, String statement, List<Object?> args) {
+    if (statement.contains('legacy_alter_table') && statement.contains('=')) {
+      didPreventLegacyAlterTable = true;
+      throw 'not allowed';
+    }
+
+    return super.runCustom(executor, statement, args);
+  }
 }

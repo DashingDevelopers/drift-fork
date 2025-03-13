@@ -1,6 +1,50 @@
-## 0.36.1
+## 0.41.0
+
+- Replace `ColonNamedVariable` with `NamedVariable` for all named variables.
+- Analysis support for SQLite 3.48.
+- Fix nullability analysis around fts5 tables (enabled when raising the version
+  to 3.48 to preserve backwards-compatibility).
+
+## 0.40.0
+
+- Add support for the `dbstat` module.
+- Prioritize null propagation in type resolver, leading to more accurate
+  analysis on which columns are nullable.
+
+## 0.39.2
+
+- Fix false-positive lint for a parameter count mismatch on `bm25()`.
+- Fix type interference around `fts5` function calls.
+
+## 0.39.1
+
+- Improve recovery in parser when encountering syntax errors.
+
+## 0.39.0
+
+- When using the `parse` methods on `SqlEngine`, tokenizer errors are now
+  included in the result instead of throwing an exception.
+
+## 0.38.1
+
+- Fix upcoming `unreachable_switch_default` lint.
+
+## 0.38.0
+
+- Resolve `json_extract` return types from context if possible.
+- Warn when `INSTEAD OF` triggers are not used on views.
+- Represent writes to views in `TableWrite`.
+
+## 0.37.1
+
+- Refine nullability analysis for subquery expressions: Queries with aggregate
+  invocations are no longer considered nullable (the aggregate invocation had
+  to be a top-level expression before).
+
+## 0.37.0
 
 - Add support for sqlite 3.46.0.
+- Make columns coming from subquery expressions nullable.
 
 ## 0.36.0
 

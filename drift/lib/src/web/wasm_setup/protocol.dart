@@ -3,8 +3,8 @@
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
-import 'package:web/web.dart' hide WorkerOptions;
 import 'package:sqlite3/wasm.dart';
+import 'package:web/web.dart' hide WorkerOptions;
 
 import 'types.dart';
 
@@ -22,13 +22,27 @@ enum ProtocolVersion {
 
   /// This version adds the `enableMigrations` field to [ServeDriftDatabase],
   /// controlling whether the worker server should implement migrations.
-  v2(2);
+  v2(2),
+
+  /// This adds [ServeDriftDatabase.newSerialization]. When enabled, we
+  /// serialize high-level protocol messages to `JSObject`s directly instead of
+  /// using `jsify()` / `dartify()`.
+  v3(3),
+
+  /// This makes workers serialize [SqliteException]s in a special format that
+  /// allows re-constructing them on the client.
+  /// We can't send arbitrary Dart objects through channels, so exceptions are
+  /// represented by [Object.toString] only. Given that most exceptions
+  /// encountered on web workers will end up being [SqliteException]s, treating
+  /// them specially allows clients to make informed decisions based on the
+  /// exact [SqliteException.resultCode].
+  v4(4);
 
   final int versionCode;
 
   const ProtocolVersion(this.versionCode);
 
-  static const current = v2;
+  static const current = v4;
 
   void writeToJs(JSObject object) {
     object['v'] = versionCode.toJS;
@@ -44,7 +58,8 @@ enum ProtocolVersion {
       <= 0 => legacy,
       1 => v1,
       2 => v2,
-      > 2 => current,
+      3 => v3,
+      > 3 => current,
       _ => throw AssertionError(),
     };
   }
@@ -162,7 +177,7 @@ final class SharedWorkerCompatibilityResult extends CompatibilityResult {
 
   factory SharedWorkerCompatibilityResult.fromJsPayload(JSArray payload) {
     final asList = payload.toDart;
-    final asBooleans = asList.cast<bool>();
+    bool asBoolean(int index) => (asList[index] as JSBoolean).toDart;
 
     final List<ExistingDatabase> existingDatabases;
     var version = ProtocolVersion.legacy;
@@ -171,18 +186,18 @@ final class SharedWorkerCompatibilityResult extends CompatibilityResult {
       existingDatabases = EncodeLocations.readFromJs(asList[5] as JSArray);
 
       if (asList.length > 6) {
-        version = ProtocolVersion.negotiate(asList[6] as int);
+        version = ProtocolVersion.negotiate((asList[6] as JSNumber).toDartInt);
       }
     } else {
       existingDatabases = const [];
     }
 
     return SharedWorkerCompatibilityResult(
-      canSpawnDedicatedWorkers: asBooleans[0],
-      dedicatedWorkersCanUseOpfs: asBooleans[1],
-      canUseIndexedDb: asBooleans[2],
-      indexedDbExists: asBooleans[3],
-      opfsExists: asBooleans[4],
+      canSpawnDedicatedWorkers: asBoolean(0),
+      dedicatedWorkersCanUseOpfs: asBoolean(1),
+      canUseIndexedDb: asBoolean(2),
+      indexedDbExists: asBoolean(3),
+      opfsExists: asBoolean(4),
       existingDatabases: existingDatabases,
       version: version,
     );
@@ -222,6 +237,7 @@ final class WorkerError extends WasmInitializationMessage implements Exception {
   WorkerError(this.error);
 
   factory WorkerError.fromJsPayload(JSObject payload) {
+    // ignore: invalid_runtime_check_with_js_interop_types
     return WorkerError((payload as JSString).toDart);
   }
 
@@ -248,6 +264,7 @@ final class ServeDriftDatabase extends WasmInitializationMessage {
   final MessagePort? initializationPort;
   final ProtocolVersion protocolVersion;
   final bool enableMigrations;
+  final bool newSerialization;
 
   ServeDriftDatabase({
     required this.sqlite3WasmUri,
@@ -257,6 +274,7 @@ final class ServeDriftDatabase extends WasmInitializationMessage {
     required this.initializationPort,
     required this.protocolVersion,
     required this.enableMigrations,
+    required this.newSerialization,
   });
 
   factory ServeDriftDatabase.fromJsPayload(JSObject payload) {
@@ -272,6 +290,9 @@ final class ServeDriftDatabase extends WasmInitializationMessage {
       enableMigrations: version >= ProtocolVersion.v2
           ? (payload['migrations'] as JSBoolean).toDart
           : true,
+      newSerialization: version >= ProtocolVersion.v3
+          ? (payload['new_serialization'] as JSBoolean).toDart
+          : true,
       protocolVersion: version,
     );
   }
@@ -284,7 +305,8 @@ final class ServeDriftDatabase extends WasmInitializationMessage {
       ..['storage'] = storage.name.toJS
       ..['database'] = databaseName.toJS
       ..['initPort'] = initializationPort
-      ..['migrations'] = enableMigrations.toJS;
+      ..['migrations'] = enableMigrations.toJS
+      ..['new_serialization'] = newSerialization.toJS;
 
     protocolVersion.writeToJs(object);
 

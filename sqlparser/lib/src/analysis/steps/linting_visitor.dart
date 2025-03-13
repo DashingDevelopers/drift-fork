@@ -157,6 +157,23 @@ class LintingVisitor extends RecursiveVisitor<void, void> {
   void visitCreateTriggerStatement(CreateTriggerStatement e, void arg) {
     final topLevelBefore = _isInTopLevelTriggerStatement;
     _isInTopLevelTriggerStatement = true;
+
+    if (e.onTable.resultSet?.unalias() case final on?) {
+      if (on is View && !e.mode.isSupportedOnViews) {
+        context.reportError(AnalysisError(
+          type: AnalysisErrorType.invalidTriggerMode,
+          relevantNode: e.onTable,
+          message: 'Only `INSTEAD OF` triggers are allowed for views.',
+        ));
+      } else if (on is Table && !e.mode.isSupportedOnTables) {
+        context.reportError(AnalysisError(
+          type: AnalysisErrorType.invalidTriggerMode,
+          relevantNode: e.onTable,
+          message: '`INSTEAD OF` triggers are only allowed on views.',
+        ));
+      }
+    }
+
     visitChildren(e, arg);
     _isInTopLevelTriggerStatement = topLevelBefore;
   }
@@ -329,6 +346,7 @@ class LintingVisitor extends RecursiveVisitor<void, void> {
       'unhex' => SqliteVersion.v3_41,
       'timediff' || 'octet_length' => SqliteVersion.v3_43,
       'concat' || 'concat_ws' || 'string_agg' => SqliteVersion.v3_44,
+      'if' => SqliteVersion.v3_48,
       _ => null,
     };
 

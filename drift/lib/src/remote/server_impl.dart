@@ -64,7 +64,7 @@ class ServerImplementation implements DriftServer {
   }
 
   @override
-  void serve(StreamChannel<Object?> channel, {bool serialize = true}) {
+  Future<void> serve(StreamChannel<Object?> channel, {bool serialize = true}) {
     if (_isShuttingDown) {
       throw StateError('Cannot add new channels after shutdown() was called');
     }
@@ -74,7 +74,7 @@ class ServerImplementation implements DriftServer {
     comm.notify(ServerInfo(connection.dialect));
 
     _activeChannels.add(comm);
-    comm.closed.then((_) => _activeChannels.remove(comm));
+    return comm.closed.then((_) => _activeChannels.remove(comm));
   }
 
   @override
@@ -93,7 +93,8 @@ class ServerImplementation implements DriftServer {
     }
   }
 
-  dynamic _handleRequest(DriftCommunication comms, Request request) {
+  FutureOr<ResponsePayload?> _handleRequest(
+      DriftCommunication comms, Request request) {
     final payload = request.payload;
 
     if (payload is NoArgsRequest) {
@@ -121,24 +122,26 @@ class ServerImplementation implements DriftServer {
     } else if (payload is NotifyTablesUpdated) {
       _tableUpdateNotifications.add(payload);
       dispatchTableUpdateNotification(payload, comms);
-    } else if (payload is RunTransactionAction) {
+    } else if (payload is RunNestedExecutorControl) {
       return _transactionControl(comms, payload.control, payload.executorId);
     } else if (payload is RequestCancellation) {
       _cancellableOperations[payload.originalRequestId]?.cancel();
       return null;
     }
+
+    return null;
   }
 
-  Future<bool> _handleEnsureOpen(
+  Future<ResponsePayload> _handleEnsureOpen(
       DriftCommunication comms, EnsureOpen open) async {
     final executor = await _loadExecutor(open.executorId);
     _knownSchemaVersion = open.schemaVersion;
 
-    return await executor
-        .ensureOpen(_ServerDbUser(this, comms, open.schemaVersion));
+    return PrimitiveResponsePayload.bool(await executor
+        .ensureOpen(_ServerDbUser(this, comms, open.schemaVersion)));
   }
 
-  Future<dynamic> _runQuery(StatementMethod method, String sql,
+  Future<ResponsePayload?> _runQuery(StatementMethod method, String sql,
       List<Object?> args, int? transactionId) async {
     final executor = await _loadExecutor(transactionId);
 
@@ -148,19 +151,24 @@ class ServerImplementation implements DriftServer {
 
     switch (method) {
       case StatementMethod.custom:
-        return executor.runCustom(sql, args);
+        await executor.runCustom(sql, args);
+        return null;
       case StatementMethod.deleteOrUpdate:
-        return executor.runDelete(sql, args);
+        return PrimitiveResponsePayload.int(
+            await executor.runDelete(sql, args));
       case StatementMethod.insert:
-        return executor.runInsert(sql, args);
+        return PrimitiveResponsePayload.int(
+            await executor.runInsert(sql, args));
       case StatementMethod.select:
         return SelectResult(await executor.runSelect(sql, args));
     }
   }
 
-  Future<void> _runBatched(BatchedStatements stmts, int? transactionId) async {
+  Future<ResponsePayload?> _runBatched(
+      BatchedStatements stmts, int? transactionId) async {
     final executor = await _loadExecutor(transactionId);
     await executor.runBatched(stmts);
+    return null;
   }
 
   Future<QueryExecutor> _loadExecutor(int? transactionId) async {
@@ -172,11 +180,15 @@ class ServerImplementation implements DriftServer {
 
   Future<int> _spawnTransaction(DriftCommunication comm, int? executor) async {
     final transaction = (await _loadExecutor(executor)).beginTransaction();
-    final id = _putExecutor(transaction, beforeCurrent: true);
-
     await transaction
         .ensureOpen(_ServerDbUser(this, comm, _knownSchemaVersion));
-    return id;
+    return _putExecutor(transaction, beforeCurrent: true);
+  }
+
+  Future<int> _spawnExclusive(DriftCommunication comm, int? executor) async {
+    final exclusive = (await _loadExecutor(executor)).beginExclusive();
+    await exclusive.ensureOpen(_ServerDbUser(this, comm, _knownSchemaVersion));
+    return _putExecutor(exclusive, beforeCurrent: true);
   }
 
   int _putExecutor(QueryExecutor executor, {bool beforeCurrent = false}) {
@@ -192,13 +204,23 @@ class ServerImplementation implements DriftServer {
     return id;
   }
 
-  Future<dynamic> _transactionControl(DriftCommunication comm,
-      TransactionControl action, int? executorId) async {
-    if (action == TransactionControl.begin) {
-      return await _spawnTransaction(comm, executorId);
+  Future<ResponsePayload?> _transactionControl(DriftCommunication comm,
+      NestedExecutorControl action, int? executorId) async {
+    if (action == NestedExecutorControl.beginTransaction) {
+      return PrimitiveResponsePayload.int(
+          await _spawnTransaction(comm, executorId));
+    } else if (action == NestedExecutorControl.startExclusive) {
+      return PrimitiveResponsePayload.int(
+          await _spawnExclusive(comm, executorId));
     }
 
-    final executor = _managedExecutors[executorId];
+    final executor = await _loadExecutor(executorId);
+    if (action == NestedExecutorControl.endExclusive) {
+      await executor.close();
+      _releaseExecutor(executorId!);
+      return null;
+    }
+
     if (executor is! TransactionExecutor) {
       throw ArgumentError.value(
         executorId,
@@ -210,12 +232,12 @@ class ServerImplementation implements DriftServer {
     }
 
     switch (action) {
-      case TransactionControl.commit:
+      case NestedExecutorControl.commit:
         await executor.send();
         // The transaction should only be released if the commit doesn't throw.
         _releaseExecutor(executorId!);
         break;
-      case TransactionControl.rollback:
+      case NestedExecutorControl.rollback:
         // Rollbacks shouldn't fail. Other parts of drift assume the transaction
         // to be over after a rollback either way, so we always release the
         // executor in this case.
@@ -228,6 +250,8 @@ class ServerImplementation implements DriftServer {
       default:
         assert(false, 'Unknown TransactionControl');
     }
+
+    return null;
   }
 
   void _releaseExecutor(int id) {

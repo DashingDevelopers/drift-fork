@@ -12,7 +12,7 @@ void main() {
       'a|lib/a.drift': '''
 CREATE TABLE a (
   foo INTEGER PRIMARY KEY,
-  bar INTEGER REFERENCES b (bar)
+  bar INTEGER REFERENCES b (bar) DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TABLE b (
@@ -46,8 +46,10 @@ CREATE TABLE b (
           .having((e) => e.otherColumn, 'otherColumn', bBar)
           .having((e) => e.onUpdate, 'onUpdate', isNull)
           .having((e) => e.onDelete, 'onDelete', isNull)
+          .having((e) => e.initiallyDeferred, 'initiallyDeferred', isTrue)
     ]);
-    expect(aBar.customConstraints, 'REFERENCES b(bar)');
+    expect(aBar.customConstraints,
+        'REFERENCES b(bar)DEFERRABLE INITIALLY DEFERRED');
 
     expect(bBar.sqlType.builtin, DriftSqlType.int);
     expect(bBar.nullable, isFalse);
@@ -260,6 +262,34 @@ CREATE TABLE IF NOT EXISTS currencies (
       table.columnBySqlName['name'],
       isA<DriftColumn>().having((e) => e.documentationComment,
           'documentationComment', '/// The name of this currency'),
+    );
+  });
+
+  test('preserves the order of comments for columns', () async {
+    final state = await TestBackend.inTest({
+      'a|lib/a.drift': '''
+CREATE TABLE todos (
+  -- This is the first comment.
+  -- This is the second comment.
+  title TEXT NOT NULL
+);
+''',
+    });
+
+    final file = await state.analyze('package:a/a.drift');
+    state.expectNoErrors();
+
+    final table = file.analyzedElements.single as DriftTable;
+    final column = table.columnBySqlName['title'];
+
+    expect(
+      column,
+      isA<DriftColumn>().having(
+        (c) => c.documentationComment,
+        'documentationComment',
+        '''/// This is the first comment.
+/// This is the second comment.''',
+      ),
     );
   });
 

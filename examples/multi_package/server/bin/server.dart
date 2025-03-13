@@ -49,7 +49,7 @@ void main(List<String> args) async {
       return Response(201);
     })
     ..get('/posts/latest', (req) async {
-      final somePosts = await database.sharedDrift
+      final somePosts = await database.sharedDrift.postsDrift
           .allPosts(limit: (_, __) => Limit(10, null))
           .get();
 

@@ -1,7 +1,11 @@
 @Tags(['analyzer'])
+library;
+
+import 'package:build_test/build_test.dart';
 import 'package:drift_dev/src/analysis/results/results.dart';
 import 'package:test/test.dart';
 
+import '../../../utils.dart';
 import '../../test_utils.dart';
 
 void main() {
@@ -592,5 +596,102 @@ class Users extends Table {
       );
       expect(table.nameOfRowClass, 'User');
     }, skip: requireDart('3.0.0-dev'));
+  });
+
+  test('respects columns only included towards insertable', () async {
+    final result = await emulateDriftBuild(
+      inputs: {
+        'a|lib/a.dart': '''
+import 'package:drift/drift.dart';
+
+@UseRowClass(User, generateInsertable: true)
+class Users extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get some => text()();
+  TextColumn get some2 => text()();
+}
+
+class User implements Insertable<User> {
+  User({required this.id, required this.some});
+
+  final int id;
+  final String some;
+  String get some2 => some;
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    return UsersCompanion(
+      id: Value(id),
+      some: Value(some),
+      some2: Value(some2),
+    ).toColumns(nullToAbsent);
+  }
+}
+''',
+      },
+      modularBuild: true,
+      logger: loggerThat(neverEmits(anything)),
+    );
+
+    checkOutputs({
+      'a|lib/a.drift.dart': decodedMatches(contains(r'''
+class _$UserInsertable implements i0.Insertable<i1.User> {
+  i1.User _object;
+  _$UserInsertable(this._object);
+  @override
+  Map<String, i0.Expression> toColumns(bool nullToAbsent) {
+    return i2.UsersCompanion(
+      id: i0.Value(_object.id),
+      some: i0.Value(_object.some),
+      some2: i0.Value(_object.some2),
+    ).toColumns(false);
+  }
+}
+''')),
+    }, result.dartOutputs, result.writer);
+  });
+
+  test('generates insertable for inherited getter', () async {
+    final result = await emulateDriftBuild(
+      inputs: {
+        'a|lib/a.dart': '''
+import 'package:drift/drift.dart';
+
+@UseRowClass(User, generateInsertable: true)
+class Users extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get some => text()();
+}
+
+mixin class HasId {
+  final int id;
+}
+
+class User with HasId {
+  User({required this.id, required this.some});
+
+  final String some;
+}
+''',
+      },
+      modularBuild: true,
+      logger: loggerThat(neverEmits(anything)),
+    );
+
+    checkOutputs({
+      'a|lib/a.drift.dart': decodedMatches(contains(r'''
+class _$UserInsertable implements i0.Insertable<i1.User> {
+  i1.User _object;
+  _$UserInsertable(this._object);
+  @override
+  Map<String, i0.Expression> toColumns(bool nullToAbsent) {
+    return i2.UsersCompanion(
+      id: i0.Value(_object.id),
+      some: i0.Value(_object.some),
+    ).toColumns(false);
+  }
+}
+''')),
+    }, result.dartOutputs, result.writer);
   });
 }

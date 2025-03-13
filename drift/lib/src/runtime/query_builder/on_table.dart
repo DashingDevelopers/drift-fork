@@ -75,7 +75,14 @@ extension TableStatements<Tbl extends Table, Row> on TableInfo<Tbl, Row> {
   Future<void> insertAll(Iterable<Insertable<Row>> rows,
       {InsertMode? mode, UpsertClause<Tbl, Row>? onConflict}) {
     return attachedDatabase.batch((b) {
-      b.customStatement('pragma defer_foreign_keys = on;');
+      // TODO: Remove this pragma, it should be an explicit opt-in.
+      // https://github.com/simolus3/drift/issues/3393
+      if (attachedDatabase.executor.dialect == SqlDialect.sqlite) {
+        // Note that this batch runs in a transaction, the pragma will be reset
+        // when the transaction completes.
+        b.customStatement('pragma defer_foreign_keys = on;');
+      }
+
       b.insertAll(this, rows, mode: mode, onConflict: onConflict);
     });
   }

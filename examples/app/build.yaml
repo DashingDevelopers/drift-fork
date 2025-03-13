@@ -16,6 +16,8 @@ targets:
       drift_dev:
         # These options change how drift generates code
         options:
+          databases:
+            default: lib/database/database.dart
           # Drift analyzes SQL queries at compile-time. For this purpose, it needs to know which sqlite3
           # features will be available. We depend on `sqlite3_flutter_libs`, which lets us use the latest
           # version with fts5 enabled.
@@ -41,13 +43,13 @@ targets:
     dependencies: [$default]
     builders:
       ":copy_compiled_worker_js":
-          enabled: true
+        enabled: true
 
 # build_web_compilers writes a hidden asset, but we want an asset in `web/` for
 # flutter to see. So, copy that output. Again, this is not needed for most apps.
 builders:
   copy_compiled_worker_js:
-    import: 'tool/builder.dart'
+    import: "tool/builder.dart"
     builder_factories: ["CopyCompiledJs.new"]
     build_to: source
-    build_extensions: {'web/worker.dart.js': ['web/drift_worker.js']}
+    build_extensions: { "web/worker.dart.js": ["web/drift_worker.js"] }

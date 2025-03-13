@@ -244,17 +244,15 @@ class UpdateCompanionWriter {
       ..writeln(' nullToAbsent) {')
       ..writeln('return $_companionType(');
 
-    final columns = info.positionalColumns.followedBy(info.namedColumns.values);
-    for (final columnName in columns) {
-      final column =
-          table.columns.firstWhereOrNull((e) => e.nameInSql == columnName);
+    for (final MapEntry(:key, :value) in info.columnGetters.entries) {
+      final column = table.columns.firstWhereOrNull((e) => e.nameInSql == key);
 
       if (column != null && !column.isGenerated) {
         final dartName = column.nameInDart;
         _emitter
           ..write('$dartName: ')
           ..writeDriftRef('Value')
-          ..writeln('(_object.$dartName),');
+          ..writeln('(_object.$value),');
       }
     }
 

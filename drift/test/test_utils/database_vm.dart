@@ -10,15 +10,21 @@ import 'package:path/path.dart' as p;
 bool _checkedForLocalSqlite3 = false;
 
 String? get expectedLocalSqlite3Path {
+  final folder = p.join('.dart_tool', 'sqlite3', 'latest');
+
   if (Platform.isWindows) {
-    return p.join('.dart_tool', 'sqlite3', 'sqlite3.dll');
+    return p.join(folder, 'sqlite3.dll');
   } else if (Platform.isMacOS) {
-    return p.join('.dart_tool', 'sqlite3', 'libsqlite3.dylib');
+    return p.join(folder, 'libsqlite3.dylib');
   } else if (Platform.isLinux) {
-    return p.join('.dart_tool', 'sqlite3', 'libsqlite3.so');
+    return p.join(folder, 'libsqlite3.so');
   } else {
     return null;
   }
+}
+
+Object? transportRoundtrip(Object? source) {
+  return source;
 }
 
 /// Checks if a sqlite3 build has been downloaded into [expectedLocalSqlite3Path],
@@ -49,5 +55,7 @@ Version get sqlite3Version {
 
 DatabaseConnection testInMemoryDatabase() {
   preferLocalSqlite3();
-  return DatabaseConnection(NativeDatabase.memory());
+  return DatabaseConnection(NativeDatabase.memory(setup: (rawDb) {
+    rawDb.config.doubleQuotedStringLiterals = false;
+  }));
 }

@@ -81,8 +81,8 @@ void main() {
           SelectStatement(
             columns: [
               ExpressionResultColumn(
-                expression: ColonNamedVariable(
-                  ColonVariableToken(fakeSpan(':foo'), ':foo'),
+                expression: NamedVariable(
+                  ColonVariableToken(fakeSpan(':foo'), 'foo'),
                 ),
               ),
             ],
@@ -90,8 +90,8 @@ void main() {
           ),
           parameters: [
             VariableTypeHint(
-              ColonNamedVariable(
-                ColonVariableToken(fakeSpan(':foo'), ':foo'),
+              NamedVariable(
+                ColonVariableToken(fakeSpan(':foo'), 'foo'),
               ),
               'TEXT',
               orNull: true,
@@ -205,7 +205,7 @@ SELECT DISTINCT A.* FROM works A, works B ON A.id =
   });
 
   test('parses REQUIRED without type hint', () {
-    final variable = ColonVariableToken(fakeSpan(':category'), ':category');
+    final variable = ColonVariableToken(fakeSpan(':category'), 'category');
     testDriftFile(
       'test(REQUIRED :category): SELECT :category;',
       DriftFile([
@@ -213,12 +213,12 @@ SELECT DISTINCT A.* FROM works A, works B ON A.id =
           SimpleName('test'),
           SelectStatement(columns: [
             ExpressionResultColumn(
-              expression: ColonNamedVariable(variable),
+              expression: NamedVariable(variable),
             ),
           ]),
           parameters: [
             VariableTypeHint(
-              ColonNamedVariable(variable),
+              NamedVariable(variable),
               null,
               isRequired: true,
             ),

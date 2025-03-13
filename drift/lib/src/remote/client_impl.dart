@@ -49,18 +49,22 @@ class DriftClient {
     _channel.setRequestHandler(_handleRequest);
   }
 
-  dynamic _handleRequest(Request request) {
+  FutureOr<ResponsePayload?> _handleRequest(Request request) {
     final payload = request.payload;
 
     if (payload is RunBeforeOpen) {
       final executor = _RemoteQueryExecutor(this, payload.createdExecutor);
-      return _connectedDb.beforeOpen(executor, payload.details);
+      return _connectedDb
+          .beforeOpen(executor, payload.details)
+          .then((_) => null);
     } else if (payload is NotifyTablesUpdated) {
       _streamStore.handleTableUpdates(payload.updates.toSet(), true);
     } else if (payload is ServerInfo) {
       _serverDialect = payload.dialect;
       _serverInfo.complete(payload);
     }
+
+    return null;
   }
 }
 
@@ -100,6 +104,13 @@ abstract class _BaseExecutor extends QueryExecutor {
     );
   }
 
+  Future<int> _intRequest(
+      StatementMethod method, String sql, List<Object?>? args) async {
+    final response =
+        await _runRequest<PrimitiveResponsePayload>(method, sql, args);
+    return response.message as int;
+  }
+
   @override
   Future<void> runCustom(String statement, [List<Object?>? args]) {
     return _runRequest(
@@ -111,17 +122,17 @@ abstract class _BaseExecutor extends QueryExecutor {
 
   @override
   Future<int> runDelete(String statement, List<Object?> args) {
-    return _runRequest(StatementMethod.deleteOrUpdate, statement, args);
+    return _intRequest(StatementMethod.deleteOrUpdate, statement, args);
   }
 
   @override
   Future<int> runUpdate(String statement, List<Object?> args) {
-    return _runRequest(StatementMethod.deleteOrUpdate, statement, args);
+    return _intRequest(StatementMethod.deleteOrUpdate, statement, args);
   }
 
   @override
   Future<int> runInsert(String statement, List<Object?> args) {
-    return _runRequest(StatementMethod.insert, statement, args);
+    return _intRequest(StatementMethod.insert, statement, args);
   }
 
   @override
@@ -132,6 +143,16 @@ abstract class _BaseExecutor extends QueryExecutor {
 
     return result.rows;
   }
+
+  @override
+  QueryExecutor beginExclusive() {
+    return _RemoteExclusiveExecutor(client, _executorId);
+  }
+
+  @override
+  TransactionExecutor beginTransaction() {
+    return _RemoteTransactionExecutor(client, _executorId);
+  }
 }
 
 class _RemoteQueryExecutor extends _BaseExecutor {
@@ -139,11 +160,6 @@ class _RemoteQueryExecutor extends _BaseExecutor {
 
   Completer<void>? _setSchemaVersion;
   Future<bool>? _serverIsOpen;
-
-  @override
-  TransactionExecutor beginTransaction() {
-    return _RemoteTransactionExecutor(client, _executorId);
-  }
 
   @override
   Future<bool> ensureOpen(QueryExecutorUser user) async {
@@ -154,7 +170,9 @@ class _RemoteQueryExecutor extends _BaseExecutor {
     }
 
     return _serverIsOpen ??= client._channel
-        .request<bool>(EnsureOpen(user.schemaVersion, _executorId));
+        .request<PrimitiveResponsePayload>(
+            EnsureOpen(user.schemaVersion, _executorId))
+        .then((payload) => payload.message as bool);
   }
 
   @override
@@ -209,13 +227,16 @@ class _RemoteTransactionExecutor extends _BaseExecutor
   }
 
   Future<bool> _openAtServer() async {
-    _executorId = await client._channel.request<int>(
-        RunTransactionAction(TransactionControl.begin, _outerExecutorId));
+    final response = await client._channel.request<PrimitiveResponsePayload>(
+        RunNestedExecutorControl(
+            NestedExecutorControl.beginTransaction, _outerExecutorId));
+    _executorId = response.message as int;
     return true;
   }
 
-  Future<void> _sendAction(TransactionControl action) {
-    return client._channel.request(RunTransactionAction(action, _executorId));
+  Future<void> _sendAction(NestedExecutorControl action) {
+    return client._channel
+        .request(RunNestedExecutorControl(action, _executorId));
   }
 
   @override
@@ -223,7 +244,7 @@ class _RemoteTransactionExecutor extends _BaseExecutor
     // don't do anything if the transaction isn't open yet
     if (_pendingOpen == null) return;
 
-    await _sendAction(TransactionControl.rollback);
+    await _sendAction(NestedExecutorControl.rollback);
     _done = true;
   }
 
@@ -232,8 +253,40 @@ class _RemoteTransactionExecutor extends _BaseExecutor
     // don't do anything if the transaction isn't open yet
     if (_pendingOpen == null) return;
 
-    await _sendAction(TransactionControl.commit);
+    await _sendAction(NestedExecutorControl.commit);
     _done = true;
+  }
+}
+
+final class _RemoteExclusiveExecutor extends _BaseExecutor {
+  final int? parentExecutorId;
+  Completer<bool>? _pendingOpen;
+
+  _RemoteExclusiveExecutor(super.client, this.parentExecutorId);
+
+  @override
+  Future<bool> ensureOpen(QueryExecutorUser user) {
+    final completer = _pendingOpen ??= Completer()..complete(_openAtServer());
+    return completer.future;
+  }
+
+  Future<bool> _openAtServer() async {
+    final response = await client._channel.request<PrimitiveResponsePayload>(
+        RunNestedExecutorControl(
+            NestedExecutorControl.startExclusive, parentExecutorId));
+
+    _executorId = response.message as int;
+    return true;
+  }
+
+  @override
+  Future<void> close() async {
+    // don't do anything if the transaction isn't open yet
+    if (_pendingOpen == null) return;
+
+    await _pendingOpen!.future;
+    await client._channel.request<void>(RunNestedExecutorControl(
+        NestedExecutorControl.endExclusive, _executorId));
   }
 }
 

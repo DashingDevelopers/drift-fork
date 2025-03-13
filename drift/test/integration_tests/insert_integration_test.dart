@@ -262,7 +262,7 @@ void main() {
       final id = await db.categories
           .insertOne(CategoriesCompanion.insert(description: 'with entry'));
       await db.todosTable.insertOne(TodosTableCompanion.insert(
-          content: 'my content', category: Value(id)));
+          content: 'my content', category: Value(RowId(id))));
 
       final amountOfTodos =
           db.todosTable.id.count(filter: db.todosTable.id.isNotNull());
@@ -283,6 +283,30 @@ void main() {
       final categeories = await db.categories.all().get();
       expect(categeories.map((e) => e.description),
           ['without entry', 'with entry', 'without entry0', 'with entry1']);
+    });
+
+    test('upsert', () async {
+      final originalCategory = await db.categories
+          .insertReturning(CategoriesCompanion.insert(description: 'original'));
+
+      await db.into(db.categories).insertFromSelect(
+            db.categories.select(),
+            columns: {
+              db.categories.id: db.categories.id,
+              db.categories.description: db.categories.description,
+            },
+            onConflict: DoUpdate(
+              (row) => CategoriesCompanion(
+                description: Value('updated'),
+              ),
+            ),
+          );
+
+      final category = await db.categories.all().get();
+      expect(category, [
+        originalCategory.copyWith(
+            description: 'updated', descriptionInUpperCase: 'UPDATED')
+      ]);
     });
   });
 }

@@ -9,11 +9,7 @@ class SnippetsBuilder extends CodeExcerptBuilder {
   SnippetsBuilder([BuilderOptions? options])
       : super(
           dropIndendation: true,
-          overriddenDartDocUrls: {
-            // For CI builds, the dartdoc output for the drift package is added
-            // under the `api/` url.
-            if (options?.config['release'] == true) 'drift': Uri.parse('/api/'),
-          },
+          styles: const PygmentStyles(),
         );
 
   @override

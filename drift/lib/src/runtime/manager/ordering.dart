@@ -7,59 +7,61 @@ class ColumnOrderings<T extends Object> {
   /// It's used to expose ordering functions for a column
   ///
   /// {@macro manager_internal_use_only}
-  ColumnOrderings(this.column, {this.joinBuilders});
+  ColumnOrderings(this.column);
 
   /// Column that this [ColumnOrderings] wraps
   Expression<T> column;
-
-  /// If this column is part of a join, this will hold the join builder
-  final Set<JoinBuilder>? joinBuilders;
 
   /// Create a new [ComposableOrdering] for this column.
   /// This is used to create lower level orderings
   /// that can be composed together
   ComposableOrdering $composableOrdering(Set<OrderingBuilder> orderings) {
-    return ComposableOrdering._(orderings, joinBuilders ?? {});
+    return ComposableOrdering._(orderings);
   }
 
-  /// Sort this column in ascending order
+  /// Sort this column in ascending order (1 -> 10 | A -> Z | Jan 1 -> Dec 31).
   ///
-  /// 10 -> 1 | Z -> A | Dec 31 -> Jan 1
-  ComposableOrdering asc() =>
-      $composableOrdering({OrderingBuilder(OrderingMode.asc, column)});
+  /// The optional [nulls] parameter can be used to control whether `NULL`
+  /// values in the column should come for or after non-null values.
+  ComposableOrdering asc({NullsOrder? nulls}) => $composableOrdering(
+      {OrderingBuilder(OrderingMode.asc, column, nulls: nulls)});
 
-  /// Sort this column in descending order
+  /// Sort this column in descending order (10 -> 1 | Z -> A | Dec 31 -> Jan 1).
   ///
-  ///  1 -> 10 | A -> Z | Jan 1 -> Dec 31
-  ComposableOrdering desc() =>
-      $composableOrdering({OrderingBuilder(OrderingMode.desc, column)});
+  /// The optional [nulls] parameter can be used to control whether `NULL`
+  /// values in the column should come for or after non-null values.
+  ComposableOrdering desc({NullsOrder? nulls}) => $composableOrdering(
+      {OrderingBuilder(OrderingMode.desc, column, nulls: nulls)});
 }
 
 /// Defines a class which will hold the information needed to create an ordering
-class OrderingBuilder {
+final class OrderingBuilder {
   /// The mode of the ordering
   final OrderingMode mode;
 
   /// The column that the ordering is applied to
   final Expression<Object> column;
 
+  /// How null values are treated in the ordering.
+  final NullsOrder? nulls;
+
   /// Create a new ordering builder, will be used by the [TableManagerState] to create [OrderingTerm]s
   @internal
-  OrderingBuilder(this.mode, this.column);
+  OrderingBuilder(this.mode, this.column, {this.nulls});
 
   @override
   bool operator ==(covariant OrderingBuilder other) {
     if (identical(this, other)) return true;
 
-    return other.mode == mode && other.column == column;
+    return other.mode == mode && other.column == column && other.nulls == nulls;
   }
 
   @override
-  int get hashCode => mode.hashCode ^ column.hashCode;
+  int get hashCode => Object.hash(mode, column, nulls);
 
-  /// Build a join from this join builder
+  /// Build the ordering term using the expression and direction
   OrderingTerm buildTerm() {
-    return OrderingTerm(mode: mode, expression: column);
+    return OrderingTerm(mode: mode, expression: column, nulls: nulls);
   }
 }
 
@@ -67,38 +69,21 @@ class OrderingBuilder {
 ///
 /// Multiple orderings can be composed together using the `&` operator.
 /// The orderings will be executed from left to right.
-/// See [_Composable] for more information
-/// on how joins are stored
-class ComposableOrdering extends _Composable {
+
+final class ComposableOrdering {
   /// The orderings that are being composed
   final Set<OrderingBuilder> orderingBuilders;
-  @override
-  final Set<JoinBuilder> joinBuilders;
 
-  /// Create a new [ComposableOrdering] for a column with joins
-  ComposableOrdering._(this.orderingBuilders, this.joinBuilders);
+  /// Create a new [ComposableOrdering] for a column
+  ComposableOrdering._(this.orderingBuilders);
 
   /// Combine two orderings with THEN
   ComposableOrdering operator &(ComposableOrdering other) {
-    return ComposableOrdering._(orderingBuilders.union(other.orderingBuilders),
-        joinBuilders.union(other.joinBuilders));
+    return ComposableOrdering._(orderingBuilders.union(other.orderingBuilders));
   }
 
   /// Build a drift [OrderingTerm] from this ordering
   List<OrderingTerm> buildTerms() => orderingBuilders
       .map((e) => OrderingTerm(mode: e.mode, expression: e.column))
       .toList();
-}
-
-/// The class that orchestrates the composition of orderings
-class OrderingComposer<DB extends GeneratedDatabase, T extends Table>
-    extends Composer<DB, T> {
-  /// A ordering composer will be generated for each table.
-  /// Each field on the table will return a [ColumnOrderings] object
-  /// ```dart
-  /// todos.orderBy((f) => f.name.asc());
-  /// ```
-  /// In the above example, `f` is a [OrderingComposer] object, and `f.name` returns a [ColumnOrderings] object.
-  @internal
-  OrderingComposer(super.$state);
 }
